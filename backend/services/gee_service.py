@@ -66,3 +66,37 @@ class GEEService:
             "token": map_id["token"],
             "tile_url": map_id["tile_fetcher"].url_format
         }
+
+    @staticmethod
+    def get_landcover_map():
+
+        region = GEEService.get_morocco_geometry()
+
+        image = (
+            ee.Image("ESA/WorldCover/v200/2021")  # better than ImageCollection
+            .select("Map")
+            .clip(region)  # ✅ IMPORTANT FIX
+        )
+
+        vis_params = {
+            "min": 10,
+            "max": 100,
+            "palette": [
+                "006400",  # forest
+                "ffbb22",  # shrubland
+                "ffff4c",  # grassland
+                "f096ff",  # cropland
+                "fa0000",  # urban
+                "b4b4b4",  # bare
+                "f0f0f0",  # snow
+                "0064c8",  # water
+            ],
+        }
+
+        map_id = image.getMapId(vis_params)
+
+        return {
+            "mapid": map_id["mapid"],
+            "token": map_id["token"],
+            "tile_url": map_id["tile_fetcher"].url_format
+        }
