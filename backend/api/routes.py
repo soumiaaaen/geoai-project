@@ -4,6 +4,8 @@ from services.gee_service import GEEService
 from services.landcover_service import LandCoverService
 from services.zone_service import ZoneService
 import json
+from fastapi import APIRouter, Depends
+from api.auth import verify_token
 
 router = APIRouter()
 
@@ -77,3 +79,18 @@ def get_timeseries(zone: str, dateDebut: str, dateFin: str, dataset: str):
     
     result = GEEService.get_timeseries(geom, dateDebut, dateFin, dataset)
     return result
+
+
+# Public route
+@router.get("/health")
+def health():
+    return {"status": "ok"}
+
+# Protected route — add Depends(verify_token) to any route you want to secure
+@router.get("/zones", dependencies=[Depends(verify_token)])
+def get_zones():
+    return {"zones": []}
+
+@router.get("/landcover", dependencies=[Depends(verify_token)])
+def get_landcover():
+    return {"data": []}
