@@ -161,7 +161,9 @@ GET /ndvi-map
 
 ##  Author
 
-* GitHub: https://github.com/soumiaaaen
+* GitHub:
+* https://github.com/soumiaaaen
+* https://github.com/Hali24-tech
 
 ---
 
