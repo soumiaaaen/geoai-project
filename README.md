@@ -1,172 +1,156 @@
-# 🌍 GeoAI Platform — NDVI Monitoring System
+# 🌍 GeoAI Platform — Geospatial Intelligence System
 
-## Overview
+## 📌 Overview
 
-This project is a **GeoAI web platform** that uses satellite data to analyze vegetation health in real time.
+GeoAI is a full-stack geospatial intelligence platform that analyzes environmental conditions using satellite imagery and AI-powered spatial analytics.
 
-It combines:
+It goes beyond simple NDVI visualization and provides multi-layer Earth observation analysis including vegetation, water resources, and land use classification.
 
-*  **Frontend**: Next.js + Leaflet (interactive map)
-*  **Backend**: FastAPI (API layer)
-*  **Data Source**: Google Earth Engine (Sentinel-2 imagery)
-
- The system allows users to:
-
-* Visualize NDVI (vegetation index) over Morocco 🇲🇦
-* Interact with a map
-* Click anywhere to get vegetation health values
+### 🧩 Stack
+- Frontend: Next.js + Leaflet (interactive GIS dashboard)
+- Backend: FastAPI (REST API + geospatial processing)
+- Geo Data: Google Earth Engine (Sentinel-2 imagery)
 
 ---
 
-## What is NDVI?
+## 🎯 What the system does
 
-NDVI (Normalized Difference Vegetation Index) is a key indicator used in remote sensing:
+GeoAI enables users to:
 
-* 🟢 High NDVI → healthy vegetation
-* 🟡 Medium NDVI → sparse vegetation
-* 🔴 Low NDVI → dry land / desert
+- 🗺 Visualize environmental data on an interactive map
+- 🌿 Monitor vegetation health (NDVI analysis)
+- 🏙 Perform land use / land cover classification
+- 💧 Analyze surface water bodies and changes over time
+- 🌊 Monitor groundwater-related indicators (hydrogeological analysis)
+- 📍 Select any zone (point, bbox, region, national scale)
+- 📊 Get AI-powered environmental insights in real time
 
 ---
 
-##  Project Structure
+## 🧠 Core Modules
 
-```
+### 🌿 1. Vegetation Monitoring (NDVI)
+- Computes NDVI from Sentinel-2 imagery
+- Tracks vegetation health over time
+- Detects drought and vegetation stress
+
+🟢 Healthy vegetation  
+🟡 Moderate vegetation  
+🔴 Dry / barren land  
+
+---
+
+### 🏙 2. Land Use / Land Cover Classification
+- Automatically classifies terrain into:
+  - Urban areas
+  - Agriculture
+  - Forests
+  - Bare soil
+  - Water bodies
+- Used for urban expansion and environmental monitoring
+
+---
+
+### 💧 3. Surface Water Monitoring
+- Detects rivers, lakes, reservoirs
+- Tracks seasonal and temporal changes
+- Useful for drought and water resource analysis
+
+---
+
+### 🌊 4. Groundwater Analysis
+- Hydro-geospatial indicators for underground water zones
+- Helps identify potential groundwater stress regions
+- Supports environmental planning and sustainability studies
+
+---
+
+## 🏗 Project Structure
+
 geoai-project/
 │
-├── backend/              # FastAPI + GEE
+├── backend/              # FastAPI + Google Earth Engine
 │   ├── main.py
 │   ├── api/
 │   ├── services/
 │   ├── models/
 │   └── gee/
 │
-├── geoai-frontend/       # Next.js + Leaflet
+├── geoai-frontend/       # Next.js + Leaflet GIS dashboard
 │   ├── app/
 │   ├── components/
 │   └── package.json
 │
 └── README.md
-```
 
 ---
 
-##  Installation & Setup
+## ⚙️ Installation & Setup
 
-### 1️ Clone the repository
+### 1️⃣ Clone repository
 
-```bash
 git clone https://github.com/soumiaaaen/geoai-project.git
 cd geoai-project
-```
 
 ---
 
 ## 🔧 Backend Setup (FastAPI + GEE)
 
-```bash
 cd backend
 pip install fastapi uvicorn earthengine-api pydantic
-```
 
 ### Authenticate Google Earth Engine
 
-```bash
 python -m ee.cli.eecli authenticate
-```
 
 ### Run backend
 
-```bash
-python -m uvicorn main:app --reload
-```
-
-
+uvicorn main:app --reload
 
 ---
 
 ## 🌐 Frontend Setup (Next.js)
 
-```bash
 cd geoai-frontend
 npm install
 npm install leaflet react-leaflet
 npm run dev
-```
 
 ---
 
-##  Features
+## ✨ Features
 
-###  NDVI Map
-
-* Displays satellite-based vegetation index
-* Covers Morocco + Western Sahara
-
-###  Interactive Click
-
-* Click anywhere on the map
-* Get NDVI value instantly
-
-###  Satellite Data
-
-* Source: Sentinel-2 (via Google Earth Engine)
+### 🗺 Interactive GIS Map
+- Leaflet-based map interface
+- Zone selection: point, bbox, region, country
+- Real-time spatial analysis
 
 ---
 
-##  API Endpoints
+### 🧠 AI Geospatial Engine
+- FastAPI backend processing
+- Google Earth Engine integration
+- Multi-layer environmental analysis
 
-###  Get NDVI at a point
+---
 
-```http
+### 📊 Environmental Analytics
+- NDVI vegetation index
+- Land use classification
+- Surface water detection
+- Groundwater indicators
+- Temporal and spatial insights
+
+---
+
+## 🔌 API Endpoints
+
+### 🌿 NDVI Analysis
+
 POST /ndvi
-```
-
-**Body:**
 
 ```json
 {
   "lat": 30.4,
   "lon": -9.6
 }
-```
-
----
-
-### 🗺 Get NDVI map tiles
-
-```http
-GET /ndvi-map
-```
-
----
-
-##  Tech Stack
-
-* **Frontend:** Next.js, React, Leaflet
-* **Backend:** FastAPI, Python
-* **Geo Processing:** Google Earth Engine
-* **Satellite Data:** Sentinel-2
-
----
-
-##  Future Improvements
-
-*  NDVI time series analysis
-*  Add NDWI (water index)
-*  Add temperature layers
-*  Improve performance with caching
-*  Better UI/UX
-
----
-
-##  Author
-
-* GitHub: https://github.com/soumiaaaen
-
----
-
-##  Acknowledgments
-
-* Google Earth Engine
-* OpenStreetMap
-* Sentinel-2 Data
