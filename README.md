@@ -1,174 +1,298 @@
-# 🌍 GeoAI Platform — NDVI Monitoring System
+# 🌍 HydroSight — GeoAI Environmental Intelligence Platform
 
 ## Overview
 
-This project is a **GeoAI web platform** that uses satellite data to analyze vegetation health in real time.
+HydroSight is a GeoAI web platform for real-time environmental monitoring and geospatial analysis using satellite imagery and artificial intelligence.
 
-It combines:
+The platform combines:
 
-*  **Frontend**: Next.js + Leaflet (interactive map)
-*  **Backend**: FastAPI (API layer)
-*  **Data Source**: Google Earth Engine (Sentinel-2 imagery)
+* **Frontend:** Next.js + React + Leaflet
+* **Backend:** FastAPI (Python)
+* **Geo Processing:** Google Earth Engine (GEE)
+* **Satellite Data:** Sentinel-2 imagery
+* **Authentication:** Supabase Auth + JWT
 
- The system allows users to:
-
-* Visualize NDVI (vegetation index) over Morocco 🇲🇦
-* Interact with a map
-* Click anywhere to get vegetation health values
+HydroSight enables users to analyze environmental indicators directly from an interactive map interface through AI-powered geospatial workflows.
 
 ---
 
-## What is NDVI?
+#  Main Features
 
-NDVI (Normalized Difference Vegetation Index) is a key indicator used in remote sensing:
+##  Vegetation Monitoring (NDVI)
 
-* 🟢 High NDVI → healthy vegetation
-* 🟡 Medium NDVI → sparse vegetation
-* 🔴 Low NDVI → dry land / desert
+Analyze vegetation health using the Normalized Difference Vegetation Index (NDVI).
+
+* Real-time NDVI computation
+* Vegetation stress detection
+* Time-series vegetation analysis
+* Regional and national-scale monitoring
+
+### NDVI Interpretation
+
+* 🟢 High NDVI → Healthy vegetation
+* 🟡 Medium NDVI → Sparse vegetation
+* 🔴 Low NDVI → Dry land / desert areas
 
 ---
 
-##  Project Structure
+##  Surface Water Analysis
 
-```
-geoai-project/
+Monitor water bodies and hydrological changes over time.
+
+* Surface water detection
+* Water extent monitoring
+* Drought observation
+* Temporal water analysis
+
+---
+
+##  Groundwater Monitoring
+
+Evaluate groundwater-related environmental indicators using geospatial analysis.
+
+* Groundwater risk assessment
+* Spatial suitability analysis
+* Environmental scoring system
+* AI-assisted interpretation
+
+---
+
+##  Land Use & Land Cover Classification
+
+Analyze land occupation and land cover changes using satellite imagery.
+
+* Urban area detection
+* Agricultural land mapping
+* Forest identification
+* Bare soil classification
+* Water body extraction
+
+---
+
+##  Interactive Geospatial Dashboard
+
+HydroSight provides a modern interactive dashboard with:
+
+* Interactive Leaflet map
+* Point selection
+* Bounding box (BBox) analysis
+* Province and region selection
+* National-scale analysis
+* Real-time visualization
+
+---
+
+##  Time Series Analytics
+
+Monitor environmental indicators across custom periods.
+
+* NDVI evolution
+* Water change monitoring
+* Temporal environmental trends
+* Dynamic chart visualization
+
+---
+
+##  Authentication & Security
+
+The platform integrates secure authentication and protected routes.
+
+* Supabase Authentication
+* JWT-based sessions
+* Public & protected routes
+* Middleware route protection
+* Role-ready architecture
+
+---
+
+#  AI & GeoAI Capabilities
+
+HydroSight combines AI techniques with geospatial intelligence to provide:
+
+* Environmental scoring
+* Spatial analysis automation
+* Satellite-based environmental insights
+* Real-time geospatial computation
+
+---
+
+# 🏗️ Project Structure
+
+```bash
+hydrosight/
 │
-├── backend/              # FastAPI + GEE
-│   ├── main.py
+├── backend/                  # FastAPI Backend
 │   ├── api/
 │   ├── services/
 │   ├── models/
-│   └── gee/
+│   ├── gee/
+│   ├── auth/
+│   └── main.py
 │
-├── geoai-frontend/       # Next.js + Leaflet
+├── frontend/                 # Next.js Frontend
 │   ├── app/
 │   ├── components/
-│   └── package.json
+│   ├── services/
+│   ├── middleware.ts
+│   └── public/
 │
 └── README.md
 ```
 
 ---
 
-##  Installation & Setup
+# ⚙️ Installation & Setup
 
-### 1️ Clone the repository
+## Clone the Repository
 
 ```bash
-git clone https://github.com/soumiaaaen/geoai-project.git
-cd geoai-project
+git clone https://github.com/soumiaaaen/hydrosight.git
+cd hydrosight
 ```
 
 ---
 
-## 🔧 Backend Setup (FastAPI + GEE)
+#  Backend Setup (FastAPI + Google Earth Engine)
 
 ```bash
 cd backend
+
 pip install fastapi uvicorn earthengine-api pydantic
 ```
 
-### Authenticate Google Earth Engine
+## Authenticate Google Earth Engine
 
 ```bash
 python -m ee.cli.eecli authenticate
 ```
 
-### Run backend
+## Run Backend Server
 
 ```bash
 python -m uvicorn main:app --reload
 ```
 
+Backend runs on:
 
+```bash
+http://localhost:8000
+```
 
 ---
 
-## 🌐 Frontend Setup (Next.js)
+#  Frontend Setup (Next.js)
 
 ```bash
-cd geoai-frontend
+cd frontend
+
 npm install
 npm install leaflet react-leaflet
+```
+
+## Run Frontend
+
+```bash
 npm run dev
 ```
 
----
+Frontend runs on:
 
-##  Features
-
-###  NDVI Map
-
-* Displays satellite-based vegetation index
-* Covers Morocco + Western Sahara
-
-###  Interactive Click
-
-* Click anywhere on the map
-* Get NDVI value instantly
-
-###  Satellite Data
-
-* Source: Sentinel-2 (via Google Earth Engine)
-
----
-
-##  API Endpoints
-
-###  Get NDVI at a point
-
-```http
-POST /ndvi
+```bash
+http://localhost:3000
 ```
 
-**Body:**
+---
+
+#  API Endpoints
+
+## Analyze Environmental Data
+
+```http
+POST /analyse
+```
+
+### Example Body
 
 ```json
 {
-  "lat": 30.4,
-  "lon": -9.6
+  "zoneSelection": {
+    "type": "point",
+    "lat": 30.4,
+    "lon": -9.6
+  },
+  "dateDebut": "2023-01-01",
+  "dateFin": "2023-12-31"
 }
 ```
 
 ---
 
-### 🗺 Get NDVI map tiles
+## Resolve Geospatial Zones
 
 ```http
-GET /ndvi-map
+POST /zones/resolve
 ```
 
 ---
 
-##  Tech Stack
+# 🛠️ Tech Stack
 
-* **Frontend:** Next.js, React, Leaflet
-* **Backend:** FastAPI, Python
-* **Geo Processing:** Google Earth Engine
-* **Satellite Data:** Sentinel-2
+## Frontend
+
+* Next.js
+* React
+* TypeScript
+* Tailwind CSS
+* Leaflet
+* React Leaflet
+
+## Backend
+
+* FastAPI
+* Python
+* Pydantic
+
+## GeoAI & Data
+
+* Google Earth Engine
+* Sentinel-2 Imagery
+* GeoJSON Processing
+
+## Authentication
+
+* Supabase Auth
+* JWT Authentication
 
 ---
 
-##  Future Improvements
+# 🚀 Future Improvements
 
-*  NDVI time series analysis
-*  Add NDWI (water index)
-*  Add temperature layers
-*  Improve performance with caching
-*  Better UI/UX
+* Advanced AI prediction models
+* Climate risk forecasting
+* NDWI integration
+* Temperature analysis layers
+* Satellite image export
+* PDF report generation
+* Kubernetes deployment
+* CI/CD pipeline integration
+* Performance optimization & caching
 
 ---
 
-##  Author
+# 👨‍💻 Authors
 
-* GitHub:
+GitHub:
+
 * https://github.com/soumiaaaen
 * https://github.com/Hali24-tech
 
 ---
 
-##  Acknowledgments
+#  Acknowledgments
 
 * Google Earth Engine
+* Sentinel-2 Satellite Data
 * OpenStreetMap
-* Sentinel-2 Data
+* Leaflet
+* FastAPI
+* Next.js
