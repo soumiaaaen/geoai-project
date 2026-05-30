@@ -1,21 +1,462 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
-import "leaflet/dist/leaflet.css";
+import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef } from "react";
 
-const Map = dynamic(() => import("@/components/Map"), {
-  ssr: false,
-});
-
-export default function Home() {
-  const [tileUrl, setTileUrl] = useState(null);
-
+// ── Animated counter hook ──────────────────────────────────────────────────
+function useCounter(end: number, duration = 2000, start = false) {
+  const [value, setValue] = useState(0);
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/ndvi-map")
-      .then(res => res.json())
-      .then(data => setTileUrl(data.tile_url));
-  }, []);
+    if (!start) return;
+    let startTime: number | null = null;
+    const step = (timestamp: number) => {
+      if (!startTime) startTime = timestamp;
+      const progress = Math.min((timestamp - startTime) / duration, 1);
+      setValue(Math.floor(progress * end));
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }, [end, duration, start]);
+  return value;
+}
 
-  return <Map tileUrl={tileUrl} />;
+// ── Intersection observer hook ─────────────────────────────────────────────
+function useInView(threshold = 0.2) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting) setInView(true); }, { threshold });
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, [threshold]);
+  return { ref, inView };
+}
+
+// ── Demo Video Component ───────────────────────────────────────────────────
+function DemoVideo() {
+  return (
+    <div style={{
+      borderRadius: 20,
+      overflow: "hidden",
+      border: "1px solid rgba(56,189,248,0.15)",
+      boxShadow: "0 40px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(56,189,248,0.08)",
+      background: "#0a1628",
+      position: "relative",
+    }}>
+      <video
+        src="/mp_.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        style={{
+          width: "100%",
+          display: "block",
+          borderRadius: 20,
+        }}
+      />
+      <div style={{
+        position: "absolute",
+        inset: 0,
+        borderRadius: 20,
+        pointerEvents: "none",
+        boxShadow: "inset 0 0 40px rgba(56,189,248,0.04)",
+      }} />
+    </div>
+  );
+}
+
+// ── FAQ Data ───────────────────────────────────────────────────────────────
+const faqs = [
+  { q: "What satellite data does GeoAI use?", a: "GeoAI uses Sentinel-2 imagery via Google Earth Engine, providing high-resolution multispectral data updated every 5 days globally." },
+  { q: "What geographic scales are supported?", a: "From a single point to national scale — you can select a point, draw a bounding box, pick a province/region, or run country-wide analysis." },
+  { q: "How is the AI analysis performed?", a: "The backend (FastAPI + GEE) computes indices like NDVI and runs land cover classification in real time, returning results directly to your interactive map." },
+  { q: "Is authentication required?", a: "Yes. The platform uses JWT-based authentication with role-based access control (user/admin) for secure API communication." },
+  { q: "Can I run time series analysis?", a: "Absolutely. You can monitor any environmental indicator over a custom time period and view temporal trends in the dashboard charts." },
+];
+
+// ── Main Landing Page ──────────────────────────────────────────────────────
+export default function LandingPage() {
+  const router = useRouter();
+  const [openFaq, setOpenFaq] = useState<number | null>(null);
+  const { ref: statsRef, inView: statsVisible } = useInView();
+
+  const c1 = useCounter(94, 2200, statsVisible);
+  const c2 = useCounter(10, 1800, statsVisible);
+  const c3 = useCounter(180, 2000, statsVisible);
+  const c4 = useCounter(50, 2400, statsVisible);
+
+  return (
+    <main style={{
+      minHeight: "100vh", width: "100%",
+      background: "#04080f",
+      color: "#fff",
+      overflowX: "hidden",
+      fontFamily: "'Sora', 'Plus Jakarta Sans', sans-serif",
+    }}>
+
+      {/* Google Fonts */}
+      <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+      {/* Global styles */}
+      <style>{`
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width: 4px; background: #04080f; }
+        ::-webkit-scrollbar-thumb { background: rgba(56,189,248,0.3); border-radius: 4px; }
+        @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-12px)} }
+        @keyframes shimmer { 0%{background-position:200% center} 100%{background-position:-200% center} }
+        @keyframes fadeSlideUp { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:none} }
+        .hero-text { animation: fadeSlideUp 0.9s ease both; }
+        .hero-text-2 { animation: fadeSlideUp 0.9s 0.15s ease both; }
+        .hero-text-3 { animation: fadeSlideUp 0.9s 0.3s ease both; }
+        .hero-cta { animation: fadeSlideUp 0.9s 0.45s ease both; }
+        .gradient-text {
+          background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc, #38bdf8);
+          background-size: 200% auto;
+          -webkit-background-clip: text; background-clip: text;
+          -webkit-text-fill-color: transparent;
+          animation: shimmer 4s linear infinite;
+        }
+        .card-hover { transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease; }
+        .card-hover:hover { transform: translateY(-4px); border-color: rgba(56,189,248,0.3) !important; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+        .btn-primary {
+          background: linear-gradient(135deg, #0ea5e9, #6366f1);
+          border: none; border-radius: 10px; padding: 14px 32px;
+          font-family: inherit; font-size: 14px; font-weight: 600;
+          color: #fff; cursor: pointer; letter-spacing: 0.03em;
+          box-shadow: 0 8px 24px rgba(14,165,233,0.35);
+          transition: all 0.25s ease;
+        }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 14px 32px rgba(14,165,233,0.5); }
+        .btn-ghost {
+          background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12);
+          border-radius: 10px; padding: 14px 32px;
+          font-family: inherit; font-size: 14px; font-weight: 500;
+          color: rgba(255,255,255,0.75); cursor: pointer;
+          transition: all 0.25s ease;
+        }
+        .btn-ghost:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.25); color: #fff; }
+        section { position: relative; }
+      `}</style>
+
+      {/* ── NAVBAR ── */}
+      <header style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "0 48px", height: 72,
+        borderBottom: "1px solid rgba(255,255,255,0.05)",
+        position: "sticky", top: 0, zIndex: 100,
+        background: "rgba(4,8,15,0.85)", backdropFilter: "blur(20px)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: "linear-gradient(135deg, #0ea5e9, #6366f1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>🌍</div>
+          <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.02em" }}>GeoAI</span>
+          <span style={{ fontSize: 10, background: "rgba(56,189,248,0.15)", border: "1px solid rgba(56,189,248,0.3)", color: "#38bdf8", padding: "2px 8px", borderRadius: 20, letterSpacing: "0.06em", fontWeight: 600 }}>PLATFORM</span>
+        </div>
+        <nav style={{ display: "flex", gap: 32, fontSize: 13, color: "rgba(255,255,255,0.45)" }}>
+          {["features","how","tech","usecases","faq"].map(id => (
+            <a key={id} href={`#${id}`} style={{ textDecoration: "none", color: "inherit", transition: "color 0.2s", textTransform: "capitalize" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "#fff")}
+              onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.45)")}
+            >{id === "how" ? "How it works" : id === "usecases" ? "Use Cases" : id.charAt(0).toUpperCase()+id.slice(1)}</a>
+          ))}
+        </nav>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={() => router.push("/login")} className="btn-ghost" style={{ padding: "8px 20px", fontSize: 13 }}>Sign in</button>
+          <button onClick={() => router.push("/register")} className="btn-primary" style={{ padding: "8px 20px", fontSize: 13 }}>Get Started →</button>
+        </div>
+      </header>
+
+      {/* ── HERO ── */}
+      <section style={{ padding: "100px 48px 80px", maxWidth: 1200, margin: "0 auto", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 64, alignItems: "center" }}>
+
+        {/* Background blobs */}
+        <div style={{ position: "fixed", top: "10%", left: "5%", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle, rgba(14,165,233,0.06) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 }} />
+        <div style={{ position: "fixed", top: "40%", right: "5%", width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.06) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 }} />
+
+        {/* Left text */}
+        <div style={{ position: "relative", zIndex: 1 }}>
+          <div className="hero-text" style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 20, padding: "6px 14px", fontSize: 12, color: "#7dd3fc", letterSpacing: "0.06em", marginBottom: 24 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#38bdf8", animation: "pulse 2s infinite" }} />
+            Powered by Google Earth Engine & Sentinel-2
+          </div>
+
+          <h1 className="hero-text-2" style={{ fontSize: 56, fontWeight: 800, lineHeight: 1.05, letterSpacing: "-0.03em", marginBottom: 20 }}>
+            Earth Intelligence<br />
+            <span className="gradient-text">for Every Decision</span>
+          </h1>
+
+          <p className="hero-text-3" style={{ fontSize: 17, color: "rgba(255,255,255,0.55)", lineHeight: 1.7, marginBottom: 36, maxWidth: 480 }}>
+            Monitor vegetation, water bodies, and land use in real-time using AI-powered satellite analytics — from a single field to a whole country.
+          </p>
+
+          <div className="hero-cta" style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 40 }}>
+            <button onClick={() => router.push("/register")} className="btn-primary">Start Analyzing Free →</button>
+            <button onClick={() => router.push("/login")} className="btn-ghost">Sign In</button>
+          </div>
+
+          <div className="hero-cta" style={{ display: "flex", gap: 28 }}>
+            {[["94%", "Classification Accuracy"], ["5 days", "Global Revisit"], ["< 3s", "Analysis Speed"]].map(([v, l]) => (
+              <div key={l}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "#38bdf8" }}>{v}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>{l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right: Video */}
+        <div style={{ position: "relative", zIndex: 1 }}>
+          <DemoVideo />
+          <div style={{ position: "absolute", bottom: -40, left: "10%", right: "10%", height: 80, background: "radial-gradient(ellipse, rgba(56,189,248,0.2) 0%, transparent 70%)", pointerEvents: "none" }} />
+        </div>
+      </section>
+
+      {/* ── TRUST BAND ── */}
+      <div style={{ borderTop: "1px solid rgba(255,255,255,0.04)", borderBottom: "1px solid rgba(255,255,255,0.04)", padding: "20px 48px", display: "flex", alignItems: "center", justifyContent: "center", gap: 48, flexWrap: "wrap" }}>
+        {["Google Earth Engine", "Sentinel-2 ESA", "FastAPI", "Next.js", "JWT Security"].map(t => (
+          <span key={t} style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", letterSpacing: "0.1em", fontWeight: 600, textTransform: "uppercase" }}>{t}</span>
+        ))}
+      </div>
+
+      {/* ── WHY INVEST ── */}
+      <section style={{ padding: "100px 48px", maxWidth: 1200, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 64 }}>
+          <p style={{ fontSize: 11, color: "#38bdf8", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 12 }}>Investment Case</p>
+          <h2 style={{ fontSize: 40, fontWeight: 800, letterSpacing: "-0.03em", marginBottom: 16 }}>Why GeoAI is the <span className="gradient-text">Smart Choice</span></h2>
+          <p style={{ color: "rgba(255,255,255,0.45)", maxWidth: 560, margin: "0 auto", fontSize: 16, lineHeight: 1.7 }}>
+            Environmental intelligence is no longer a luxury — it's a strategic advantage. The organizations that act on real-time earth data win.
+          </p>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20, marginBottom: 24 }}>
+          {[
+            { icon: "⚡", title: "10× Faster Than Manual Survey", desc: "Traditional field surveys take weeks and cost thousands. GeoAI delivers the same insights in under 3 seconds — at continental scale.", accent: "#38bdf8" },
+            { icon: "💰", title: "Reduce Operational Costs", desc: "Replace expensive on-site monitoring infrastructure with satellite-based intelligence. One platform, unlimited zones, zero hardware.", accent: "#22c55e" },
+            { icon: "📈", title: "Data-Driven ROI", desc: "Precision agriculture clients report 15–30% yield improvement. Water utilities avoid costly over-irrigation. Governments save on policy missteps.", accent: "#a78bfa" },
+          ].map(card => (
+            <div key={card.title} className="card-hover" style={{ padding: 28, borderRadius: 16, background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}>
+              <div style={{ fontSize: 28, marginBottom: 16 }}>{card.icon}</div>
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 10, lineHeight: 1.35 }}>{card.title}</h3>
+              <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", lineHeight: 1.7 }}>{card.desc}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Wide investment highlight */}
+        <div style={{
+          padding: "40px 48px", borderRadius: 20,
+          background: "linear-gradient(135deg, rgba(14,165,233,0.08) 0%, rgba(99,102,241,0.08) 100%)",
+          border: "1px solid rgba(99,102,241,0.2)",
+          display: "grid", gridTemplateColumns: "1fr auto", gap: 32, alignItems: "center",
+        }}>
+          <div>
+            <div style={{ fontSize: 11, color: "#818cf8", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 12 }}>Market Opportunity</div>
+            <h3 style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 12 }}>The global geospatial analytics market is projected at <span style={{ color: "#818cf8" }}>$115B by 2030</span></h3>
+            <p style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", lineHeight: 1.7, maxWidth: 600 }}>
+              Climate change, food security, water scarcity, and ESG compliance are driving unprecedented demand for real-time environmental monitoring. GeoAI sits at the intersection of all four.
+            </p>
+          </div>
+          <div style={{ textAlign: "center", minWidth: 140 }}>
+            <div style={{ fontSize: 48, fontWeight: 800, background: "linear-gradient(135deg, #818cf8, #c084fc)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>26%</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>CAGR 2024–2030</div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── IMPACT STATS ── */}
+      <section ref={statsRef} style={{ padding: "80px 48px", background: "rgba(255,255,255,0.015)", borderTop: "1px solid rgba(255,255,255,0.05)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 0 }}>
+          {[
+            { value: c1, suffix: "%", label: "Classification Accuracy", color: "#38bdf8" },
+            { value: c2, suffix: "m", label: "Spatial Resolution", color: "#22c55e" },
+            { value: c3, suffix: "+", label: "Countries Supported", color: "#a78bfa" },
+            { value: c4, suffix: "B+", label: "Satellite Pixels / Run", color: "#f59e0b" },
+          ].map((s, i) => (
+            <div key={i} style={{ textAlign: "center", padding: "20px 0", borderRight: i < 3 ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
+              <div style={{ fontSize: 52, fontWeight: 800, color: s.color, letterSpacing: "-0.04em", lineHeight: 1 }}>
+                {s.value}{s.suffix}
+              </div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 8 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── FEATURES ── */}
+      <section id="features" style={{ padding: "100px 48px", maxWidth: 1200, margin: "0 auto" }}>
+        <p style={{ fontSize: 11, color: "#38bdf8", letterSpacing: "0.15em", textTransform: "uppercase", textAlign: "center", marginBottom: 12 }}>Capabilities</p>
+        <h2 style={{ fontSize: 36, fontWeight: 800, textAlign: "center", letterSpacing: "-0.03em", marginBottom: 12 }}>Built for Environmental Intelligence</h2>
+        <p style={{ color: "rgba(255,255,255,0.4)", textAlign: "center", marginBottom: 56, fontSize: 15, lineHeight: 1.7 }}>A complete geospatial analytics suite powered by Sentinel-2 satellite imagery.</p>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 18 }}>
+          {[
+            { icon: "🌿", title: "Vegetation Monitoring (NDVI)", desc: "Real-time NDVI computation. Detect vegetation health, stress levels, and seasonal change across any zone.", accent: "#22c55e" },
+            { icon: "🏙️", title: "Land Use Classification", desc: "AI-powered automatic classification into forest, cropland, urban areas, bare soil, and water bodies.", accent: "#f59e0b" },
+            { icon: "💧", title: "Water & Climate Analysis", desc: "Monitor water extent changes, hydrological indicators, and drought-related metrics over time.", accent: "#38bdf8" },
+            { icon: "🗺️", title: "Interactive Map Interface", desc: "Leaflet-based map with point selection, bounding box drawing, province picker, and national-scale analysis.", accent: "#818cf8" },
+            { icon: "📊", title: "Time Series Analysis", desc: "Temporal monitoring over custom date ranges. Spot trends, seasonal patterns, and anomalies with interactive charts.", accent: "#c084fc" },
+            { icon: "🔐", title: "Enterprise Security", desc: "JWT-based authentication with role-based access control. Secure API communication for enterprise deployments.", accent: "#fb923c" },
+          ].map(f => (
+            <div key={f.title} className="card-hover" style={{ padding: 24, borderRadius: 16, background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: `${f.accent}18`, border: `1px solid ${f.accent}30`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, marginBottom: 16 }}>{f.icon}</div>
+              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>{f.title}</h3>
+              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.7 }}>{f.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── DEMO SECTION (full) ── */}
+      <section style={{ padding: "80px 48px", background: "rgba(255,255,255,0.015)", borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <p style={{ fontSize: 11, color: "#38bdf8", letterSpacing: "0.15em", textTransform: "uppercase", textAlign: "center", marginBottom: 12 }}>Live Demo</p>
+          <h2 style={{ fontSize: 36, fontWeight: 800, textAlign: "center", letterSpacing: "-0.03em", marginBottom: 12 }}>See the Platform in Action</h2>
+          <p style={{ color: "rgba(255,255,255,0.4)", textAlign: "center", marginBottom: 48, fontSize: 15 }}>
+            Watch a real walkthrough of the platform — from zone selection to AI-powered analysis results.
+          </p>
+          <div style={{ position: "relative" }}>
+            <DemoVideo />
+            <div style={{ position: "absolute", bottom: -40, left: "10%", right: "10%", height: 80, background: "radial-gradient(ellipse, rgba(56,189,248,0.2) 0%, transparent 70%)", pointerEvents: "none" }} />
+          </div>
+        </div>
+      </section>
+
+      {/* ── HOW IT WORKS ── */}
+      <section id="how" style={{ padding: "100px 48px", maxWidth: 1200, margin: "0 auto" }}>
+        <p style={{ fontSize: 11, color: "#38bdf8", letterSpacing: "0.15em", textTransform: "uppercase", textAlign: "center", marginBottom: 12 }}>Workflow</p>
+        <h2 style={{ fontSize: 36, fontWeight: 800, textAlign: "center", letterSpacing: "-0.03em", marginBottom: 56 }}>Three steps to earth intelligence</h2>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 40, position: "relative" }}>
+          <div style={{ position: "absolute", top: 28, left: "17%", right: "17%", height: 1, background: "linear-gradient(90deg, transparent, rgba(56,189,248,0.3), transparent)" }} />
+          {[
+            { step: "01", title: "Select Your Zone", desc: "Pick a coordinate, draw a bounding box, or select an entire province or country on the interactive Leaflet map.", color: "#38bdf8" },
+            { step: "02", title: "Run Analysis", desc: "Choose your indicator — NDVI, land cover, water extent — and trigger real-time Google Earth Engine computation.", color: "#818cf8" },
+            { step: "03", title: "Act on AI Insights", desc: "Receive visualized results, time series charts, and AI-powered environmental interpretation — exportable and shareable.", color: "#22c55e" },
+          ].map(item => (
+            <div key={item.step} style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
+              <div style={{ width: 56, height: 56, borderRadius: 16, background: `${item.color}15`, border: `1px solid ${item.color}40`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: item.color, marginBottom: 20, zIndex: 1, fontFamily: "'JetBrains Mono', monospace" }}>{item.step}</div>
+              <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 10 }}>{item.title}</h3>
+              <p style={{ fontSize: 14, color: "rgba(255,255,255,0.45)", lineHeight: 1.7 }}>{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── TECH STACK ── */}
+      <section id="tech" style={{ padding: "80px 48px", background: "rgba(255,255,255,0.015)", borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <p style={{ fontSize: 11, color: "#38bdf8", letterSpacing: "0.15em", textTransform: "uppercase", textAlign: "center", marginBottom: 12 }}>Architecture</p>
+          <h2 style={{ fontSize: 36, fontWeight: 800, textAlign: "center", letterSpacing: "-0.03em", marginBottom: 48 }}>Enterprise-grade tech stack</h2>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
+            {[
+              { label: "Frontend", color: "#38bdf8", items: ["Next.js 14", "React + TypeScript", "Tailwind CSS", "Leaflet (maps)", "REST API integration"] },
+              { label: "Backend", color: "#818cf8", items: ["FastAPI (Python)", "Google Earth Engine", "NDVI & land cover services", "Zone management API", "JWT / bcrypt security"] },
+              { label: "Data & Security", color: "#22c55e", items: ["Sentinel-2 imagery (ESA)", "10m spatial resolution", "5-day global revisit", "Role-based access control", "GeoJSON + vector layers"] },
+            ].map(col => (
+              <div key={col.label} style={{ padding: 28, borderRadius: 16, background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                <div style={{ fontSize: 11, color: col.color, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700, marginBottom: 20 }}>{col.label}</div>
+                <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {col.items.map(t => (
+                    <li key={t} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "rgba(255,255,255,0.65)" }}>
+                      <span style={{ width: 5, height: 5, borderRadius: "50%", background: col.color, flexShrink: 0 }} />
+                      {t}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── USE CASES ── */}
+      <section id="usecases" style={{ padding: "100px 48px", maxWidth: 1200, margin: "0 auto" }}>
+        <p style={{ fontSize: 11, color: "#38bdf8", letterSpacing: "0.15em", textTransform: "uppercase", textAlign: "center", marginBottom: 12 }}>Applications</p>
+        <h2 style={{ fontSize: 36, fontWeight: 800, textAlign: "center", letterSpacing: "-0.03em", marginBottom: 56 }}>Who benefits from GeoAI?</h2>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 18 }}>
+          {[
+            { icon: "🌱", title: "Agriculture & Farming", desc: "Track crop health and vegetation stress across growing seasons to optimize yield and reduce input waste." },
+            { icon: "🌊", title: "Water Resource Management", desc: "Monitor surface water extent and drought indicators for sustainable resource planning and allocation." },
+            { icon: "🏛️", title: "Government & Policy", desc: "Evidence-based decision support for land use regulation, environmental policy, and ESG reporting." },
+            { icon: "🔬", title: "Research & Academia", desc: "Time series datasets and geospatial tools for climate science, ecology, and environmental studies." },
+            { icon: "🌳", title: "Conservation NGOs", desc: "Detect deforestation, habitat change, and biodiversity-risk zones in near real-time across any region." },
+            { icon: "📈", title: "Sustainable Investment", desc: "Monitor and report environmental impact for ESG portfolios, green bonds, and sustainability initiatives." },
+          ].map(u => (
+            <div key={u.title} className="card-hover" style={{ padding: 24, borderRadius: 16, background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}>
+              <div style={{ fontSize: 28, marginBottom: 14 }}>{u.icon}</div>
+              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>{u.title}</h3>
+              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.7 }}>{u.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── FAQ ── */}
+      <section id="faq" style={{ padding: "80px 48px", background: "rgba(255,255,255,0.015)", borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+          <p style={{ fontSize: 11, color: "#38bdf8", letterSpacing: "0.15em", textTransform: "uppercase", textAlign: "center", marginBottom: 12 }}>FAQ</p>
+          <h2 style={{ fontSize: 36, fontWeight: 800, textAlign: "center", letterSpacing: "-0.03em", marginBottom: 48 }}>Common questions</h2>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {faqs.map((faq, i) => (
+              <div key={i} style={{ borderRadius: 14, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)", overflow: "hidden" }}>
+                <button onClick={() => setOpenFaq(openFaq === i ? null : i)} style={{
+                  width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "18px 22px", textAlign: "left", background: "none", border: "none",
+                  color: "#fff", fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+                }}>
+                  <span>{faq.q}</span>
+                  <span style={{ color: "#38bdf8", fontSize: 18, transition: "transform 0.2s", transform: openFaq === i ? "rotate(45deg)" : "none" }}>+</span>
+                </button>
+                {openFaq === i && (
+                  <div style={{ padding: "0 22px 18px", fontSize: 14, color: "rgba(255,255,255,0.5)", lineHeight: 1.75, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+                    <div style={{ paddingTop: 14 }}>{faq.a}</div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── CTA FINAL ── */}
+      <section style={{ padding: "100px 48px" }}>
+        <div style={{ maxWidth: 800, margin: "0 auto", textAlign: "center", padding: "72px 48px", borderRadius: 28, background: "linear-gradient(135deg, rgba(14,165,233,0.1) 0%, rgba(99,102,241,0.1) 100%)", border: "1px solid rgba(99,102,241,0.2)", position: "relative", overflow: "hidden" }}>
+          <div style={{ position: "absolute", top: -100, left: "50%", transform: "translateX(-50%)", width: 400, height: 400, background: "radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 60%)", pointerEvents: "none" }} />
+          <p style={{ fontSize: 11, color: "#818cf8", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 16 }}>Get Started Today</p>
+          <h2 style={{ fontSize: 44, fontWeight: 800, letterSpacing: "-0.03em", marginBottom: 16, lineHeight: 1.1 }}>
+            Ready to see the Earth<br /><span className="gradient-text">as it really is?</span>
+          </h2>
+          <p style={{ color: "rgba(255,255,255,0.45)", marginBottom: 40, fontSize: 16, lineHeight: 1.7 }}>
+            Start analyzing satellite imagery in seconds. No setup. No hardware. Just intelligence.
+          </p>
+          <div style={{ display: "flex", gap: 14, justifyContent: "center" }}>
+            <button onClick={() => router.push("/register")} className="btn-primary" style={{ padding: "16px 40px", fontSize: 15 }}>Create Free Account →</button>
+            <button onClick={() => router.push("/login")} className="btn-ghost" style={{ padding: "16px 40px", fontSize: 15 }}>Sign In</button>
+          </div>
+        </div>
+      </section>
+
+      {/* ── FOOTER ── */}
+      <footer style={{ borderTop: "1px solid rgba(255,255,255,0.05)", padding: "32px 48px" }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>
+            <span>🌍</span> GeoAI Platform
+          </div>
+          <div style={{ display: "flex", gap: 24 }}>
+            {["Features", "Tech", "FAQ"].map(l => (
+              <a key={l} href={`#${l.toLowerCase()}`} style={{ textDecoration: "none", color: "inherit", transition: "color 0.2s" }}
+                onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
+                onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
+              >{l}</a>
+            ))}
+          </div>
+          <div>© {new Date().getFullYear()} — FastAPI · Next.js · Google Earth Engine</div>
+        </div>
+      </footer>
+
+    </main>
+  );
 }
