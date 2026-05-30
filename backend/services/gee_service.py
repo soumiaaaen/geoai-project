@@ -1,8 +1,114 @@
 import ee
+import time
+import json
 import concurrent.futures
+from functools import lru_cache
+
+import redis as redis_lib
 
 
 class GEEService:
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # CLASS-LEVEL CACHES
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # GWSA long-term reference mean — computed once per unique zone, never expires
+    _gwsa_ref_cache: dict = {}
+
+    # Redis client — shared across all calls
+    # Falls back gracefully if Redis is not running
+    try:
+        _redis = redis_lib.Redis(host="localhost", port=6379, decode_responses=True)
+        _redis.ping()  # confirm connection at import time
+    except Exception:
+        _redis = None
+
+    _ANALYSIS_TTL: int = 3600  # cache TTL in seconds (1 hour)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # INTERNAL HELPERS
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _zone_key(zone) -> str:
+        """Stable string key for a zone geometry (used for cache lookups)."""
+        try:
+            return str(zone.bounds().getInfo())
+        except Exception:
+            return "global_fallback"
+
+    @staticmethod
+    def _simplify(geometry, max_error: int = 1000):
+        """
+        Simplify complex geometries (national borders, large provinces) before
+        passing them to GEE operations. Fewer vertices → faster server-side
+        processing. max_error is in metres; 1000 m is imperceptible at
+        province/national scale.
+        """
+        try:
+            return geometry.simplify(maxError=max_error)
+        except Exception:
+            return geometry
+
+    @staticmethod
+    def _cache_get(key: str) -> dict | None:
+        """
+        Read from Redis if available, otherwise return None.
+        If Redis is down, silently falls through to a fresh GEE computation.
+        """
+        if GEEService._redis is None:
+            return None
+        try:
+            raw = GEEService._redis.get(key)
+            return json.loads(raw) if raw else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _cache_set(key: str, value: dict) -> None:
+        """
+        Write to Redis if available. Silent no-op if Redis is down.
+        TTL = _ANALYSIS_TTL seconds.
+        """
+        if GEEService._redis is None:
+            return
+        try:
+            GEEService._redis.setex(key, GEEService._ANALYSIS_TTL, json.dumps(value))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _get_gwsa_ref_mean(zone) -> float | None:
+        """
+        Long-term GRACE reference mean (2004–2023) for a zone.
+        Cached in _gwsa_ref_cache — the expensive EE call only ever runs once
+        per unique zone for the lifetime of the process.
+        """
+        key = GEEService._zone_key(zone)
+        if key in GEEService._gwsa_ref_cache:
+            return GEEService._gwsa_ref_cache[key]
+        try:
+            ref = (
+                ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI")
+                .filterDate("2004-01-01", "2023-12-31")
+                .mean()
+                .select("lwe_thickness")
+                .reduceRegion(
+                    reducer=ee.Reducer.mean(),
+                    geometry=zone,
+                    scale=5000,
+                    maxPixels=1e9,
+                    bestEffort=True,
+                )
+                .get("lwe_thickness")
+                .getInfo()
+            )
+            GEEService._gwsa_ref_cache[key] = ref
+            return ref
+        except Exception as e:
+            print(f"Error computing GWSA reference mean: {e}")
+            return None
 
     # ─────────────────────────────────────────────────────────────────────────
     # GEOMETRY HELPERS
@@ -11,96 +117,95 @@ class GEEService:
     @staticmethod
     def get_morocco_geometry():
         """Full Morocco geometry including Western Sahara."""
-        countries = ee.FeatureCollection("FAO/GAUL/2015/level0")
-        return countries.filter(
-            ee.Filter.Or(
-                ee.Filter.eq("ADM0_NAME", "Morocco"),
-                ee.Filter.eq("ADM0_NAME", "Western Sahara")
+        return (
+            ee.FeatureCollection("FAO/GAUL/2015/level0")
+            .filter(
+                ee.Filter.Or(
+                    ee.Filter.eq("ADM0_NAME", "Morocco"),
+                    ee.Filter.eq("ADM0_NAME", "Western Sahara"),
+                )
             )
-        ).geometry()
+            .geometry()
+        )
 
     @staticmethod
     def get_morocco_country_codes():
-        """
-        Returns the ADM0_CODE values for Morocco and Western Sahara.
-        Used to filter level1/level2 provinces and regions.
-        """
-        level0 = ee.FeatureCollection("FAO/GAUL/2015/level0")
-        codes = level0.filter(
-            ee.Filter.Or(
-                ee.Filter.eq("ADM0_NAME", "Morocco"),
-                ee.Filter.eq("ADM0_NAME", "Western Sahara")
+        """ADM0_CODE values for Morocco and Western Sahara."""
+        return (
+            ee.FeatureCollection("FAO/GAUL/2015/level0")
+            .filter(
+                ee.Filter.Or(
+                    ee.Filter.eq("ADM0_NAME", "Morocco"),
+                    ee.Filter.eq("ADM0_NAME", "Western Sahara"),
+                )
             )
-        ).aggregate_array("ADM0_CODE").getInfo()
-        return codes  # e.g. [504, 732]
+            .aggregate_array("ADM0_CODE")
+            .getInfo()
+        )
 
     @staticmethod
     def get_provinces_geojson():
-        """
-        Returns GeoJSON FeatureCollection of ALL Moroccan provinces
-        including Western Sahara provinces (level2).
-        FIX: filter by ADM0_CODE of both Morocco AND Western Sahara.
-        """
         try:
             codes = GEEService.get_morocco_country_codes()
-            provinces = ee.FeatureCollection("FAO/GAUL/2015/level2") \
-                .filter(ee.Filter.inList("ADM0_CODE", codes)) \
+            return (
+                ee.FeatureCollection("FAO/GAUL/2015/level2")
+                .filter(ee.Filter.inList("ADM0_CODE", codes))
                 .select(["ADM0_NAME", "ADM1_NAME", "ADM2_NAME"])
-            return provinces.getInfo()  # GeoJSON FeatureCollection
+                .getInfo()
+            )
         except Exception as e:
             print(f"Error in get_provinces_geojson: {e}")
             return None
 
     @staticmethod
     def get_regions_geojson():
-        """
-        Returns GeoJSON FeatureCollection of ALL Moroccan regions
-        including Western Sahara regions (level1).
-        FIX: filter by ADM0_CODE of both Morocco AND Western Sahara.
-        """
         try:
             codes = GEEService.get_morocco_country_codes()
-            regions = ee.FeatureCollection("FAO/GAUL/2015/level1") \
-                .filter(ee.Filter.inList("ADM0_CODE", codes)) \
+            return (
+                ee.FeatureCollection("FAO/GAUL/2015/level1")
+                .filter(ee.Filter.inList("ADM0_CODE", codes))
                 .select(["ADM0_NAME", "ADM1_NAME"])
-            return regions.getInfo()  # GeoJSON FeatureCollection
+                .getInfo()
+            )
         except Exception as e:
             print(f"Error in get_regions_geojson: {e}")
             return None
 
     @staticmethod
     def get_province_geometry(province_name: str):
-        """Returns geometry of a specific province by ADM2_NAME."""
         try:
             codes = GEEService.get_morocco_country_codes()
-            province = ee.FeatureCollection("FAO/GAUL/2015/level2") \
-                .filter(ee.Filter.inList("ADM0_CODE", codes)) \
+            return (
+                ee.FeatureCollection("FAO/GAUL/2015/level2")
+                .filter(ee.Filter.inList("ADM0_CODE", codes))
                 .filter(ee.Filter.eq("ADM2_NAME", province_name))
-            return province.geometry()
+                .geometry()
+            )
         except Exception as e:
             print(f"Error in get_province_geometry: {e}")
             return None
 
     @staticmethod
     def get_region_geometry(region_name: str):
-        """Returns geometry of a specific region by ADM1_NAME."""
         try:
             codes = GEEService.get_morocco_country_codes()
-            region = ee.FeatureCollection("FAO/GAUL/2015/level1") \
-                .filter(ee.Filter.inList("ADM0_CODE", codes)) \
+            return (
+                ee.FeatureCollection("FAO/GAUL/2015/level1")
+                .filter(ee.Filter.inList("ADM0_CODE", codes))
                 .filter(ee.Filter.eq("ADM1_NAME", region_name))
-            return region.geometry()
+                .geometry()
+            )
         except Exception as e:
             print(f"Error in get_region_geometry: {e}")
             return None
 
     # ─────────────────────────────────────────────────────────────────────────
-    # TILE MAP ENDPOINTS
+    # TILE MAP ENDPOINTS  (lru_cache → instant on repeated calls)
     # ─────────────────────────────────────────────────────────────────────────
 
     @staticmethod
     def get_ndvi(lat, lon, scale=30):
-        """Returns NDVI value at a single point (most recent Sentinel-2 image)."""
+        """NDVI value at a single point (most recent Sentinel-2 image)."""
         try:
             point = ee.Geometry.Point([lon, lat])
             image = (
@@ -110,338 +215,119 @@ class GEEService:
                 .first()
             )
             ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
-            value = ndvi.reduceRegion(
-                reducer=ee.Reducer.mean(),
-                geometry=point,
-                scale=scale
-            ).get("NDVI")
-            return value.getInfo()
+            return (
+                ndvi.reduceRegion(
+                    reducer=ee.Reducer.mean(),
+                    geometry=point,
+                    scale=scale,
+                    bestEffort=True,
+                )
+                .get("NDVI")
+                .getInfo()
+            )
         except Exception as e:
             print(f"Error in get_ndvi: {e}")
             return None
 
     @staticmethod
+    @lru_cache(maxsize=4)
     def get_ndvi_map():
-        """Returns tile URL for NDVI map over Morocco (2024 median)."""
+        """Tile URL for NDVI map over Morocco (2024 median). Cached."""
         try:
             region = GEEService.get_morocco_geometry()
-            image = (
+            ndvi = (
                 ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
                 .filterBounds(region)
                 .filterDate("2024-01-01", "2024-12-31")
                 .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
+                .select(["B4", "B8"])
                 .median()
                 .clip(region)
+                .normalizedDifference(["B8", "B4"])
+                .rename("NDVI")
             )
-            ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
-            vis = ndvi.visualize(
-                min=0,
-                max=1,
-                palette=["#8B0000", "#FFFF00", "#00FF00"]
-            )
+            vis = ndvi.visualize(min=0, max=1, palette=["#8B0000", "#FFFF00", "#00FF00"])
             map_id = vis.getMapId()
             return {
                 "mapid": map_id["mapid"],
                 "token": map_id["token"],
-                "tile_url": map_id["tile_fetcher"].url_format
+                "tile_url": map_id["tile_fetcher"].url_format,
             }
         except Exception as e:
             print(f"Error in get_ndvi_map: {e}")
             return None
 
     @staticmethod
+    @lru_cache(maxsize=4)
     def get_landcover_map():
-        """Returns tile URL for ESA WorldCover land use map over Morocco."""
+        """Tile URL for ESA WorldCover land use map over Morocco. Cached."""
         try:
             region = GEEService.get_morocco_geometry()
-            image = (
-                ee.Image("ESA/WorldCover/v200/2021")
-                .select("Map")
-                .clip(region)
-            )
+            image = ee.Image("ESA/WorldCover/v200/2021").select("Map").clip(region)
             vis_params = {
                 "min": 10,
                 "max": 100,
                 "palette": [
-                    "006400",  # 10 — Forest
-                    "ffbb22",  # 20 — Shrubland
-                    "ffff4c",  # 30 — Grassland
-                    "f096ff",  # 40 — Cropland
-                    "fa0000",  # 50 — Urban
-                    "b4b4b4",  # 60 — Bare land
-                    "f0f0f0",  # 70 — Snow/Ice
-                    "0064c8",  # 80 — Water
+                    "006400", "ffbb22", "ffff4c", "f096ff",
+                    "fa0000", "b4b4b4", "f0f0f0", "0064c8",
                 ],
             }
             map_id = image.getMapId(vis_params)
             return {
                 "mapid": map_id["mapid"],
                 "token": map_id["token"],
-                "tile_url": map_id["tile_fetcher"].url_format
+                "tile_url": map_id["tile_fetcher"].url_format,
             }
         except Exception as e:
             print(f"Error in get_landcover_map: {e}")
             return None
 
     @staticmethod
+    @lru_cache(maxsize=4)
     def get_gwsa_map():
-        """Returns tile URL for GRACE GWSA map over Morocco."""
+        """Tile URL for GRACE GWSA map over Morocco. Cached."""
         try:
             region = GEEService.get_morocco_geometry()
-            collection = ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI").select("lwe_thickness")
-            
-            # The GRACE MASCON dataset is already an anomaly relative to the 2004-2010 baseline.
-            # We just grab the most recent month's data to guarantee availability and speed.
-            anomaly = collection.sort("system:time_start", False).first().clip(region)
-            
-            vis_params = {
-                "min": -20,
-                "max": 20,
-                "palette": ["EF4444", "F9FAFB", "3B82F6"] # Red to White to Blue
-            }
-            map_id = anomaly.getMapId(vis_params)
+            anomaly = (
+                ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI")
+                .select("lwe_thickness")
+                .sort("system:time_start", False)
+                .first()
+                .clip(region)
+            )
+            map_id = anomaly.getMapId(
+                {"min": -20, "max": 20, "palette": ["EF4444", "F9FAFB", "3B82F6"]}
+            )
             return {
                 "mapid": map_id["mapid"],
                 "token": map_id["token"],
-                "tile_url": map_id["tile_fetcher"].url_format
+                "tile_url": map_id["tile_fetcher"].url_format,
             }
         except Exception as e:
             print(f"Error in get_gwsa_map: {e}")
             return None
 
     @staticmethod
+    @lru_cache(maxsize=4)
     def get_water_extent_map():
-        """Returns tile URL for Water extent map over Morocco (JRC)."""
+        """Tile URL for Water extent map over Morocco (JRC). Cached."""
         try:
             region = GEEService.get_morocco_geometry()
-            # Use JRC Global Surface Water for instant tile rendering
-            jrc = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").clip(region)
-            
-            # Mask out areas with 0 water occurrence
-            water_mask = jrc.gt(0).selfMask()
-            
-            vis_params = {
-                "min": 1,
-                "max": 1,
-                "palette": ["3B82F6"] # Blue
-            }
-            map_id = water_mask.getMapId(vis_params)
+            water_mask = (
+                ee.Image("JRC/GSW1_4/GlobalSurfaceWater")
+                .select("occurrence")
+                .clip(region)
+                .gt(0)
+                .selfMask()
+            )
+            map_id = water_mask.getMapId({"min": 1, "max": 1, "palette": ["3B82F6"]})
             return {
                 "mapid": map_id["mapid"],
                 "token": map_id["token"],
-                "tile_url": map_id["tile_fetcher"].url_format
+                "tile_url": map_id["tile_fetcher"].url_format,
             }
         except Exception as e:
             print(f"Error in get_water_extent_map: {e}")
-            return None
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # ANALYSIS — INDIVIDUAL EXTRACTORS
-    # ─────────────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _extract_gwsa(zone, date_debut, date_fin):
-        """
-        Groundwater Storage Anomaly from GRACE MASCON.
-        FIX: anomaly = current_mean - reference_mean (2004-2023).
-        Returns value in cm water equivalent.
-        """
-        try:
-            collection = ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI")
-            band = "lwe_thickness"
-
-            # Current period mean
-            current_mean = (
-                collection
-                .filterDate(date_debut, date_fin)
-                .mean()
-                .select(band)
-                .reduceRegion(
-                    reducer=ee.Reducer.mean(),
-                    geometry=zone,
-                    scale=5000,
-                    maxPixels=1e9
-                )
-                .get(band)
-                .getInfo()
-            )
-
-            # Long-term reference mean (2004-2023)
-            ref_mean = (
-                collection
-                .filterDate("2004-01-01", "2023-12-31")
-                .mean()
-                .select(band)
-                .reduceRegion(
-                    reducer=ee.Reducer.mean(),
-                    geometry=zone,
-                    scale=5000,
-                    maxPixels=1e9
-                )
-                .get(band)
-                .getInfo()
-            )
-
-            if current_mean is not None and ref_mean is not None:
-                return round(current_mean - ref_mean, 3)
-            return None
-        except Exception as e:
-            print(f"Error in _extract_gwsa: {e}")
-            return None
-
-    @staticmethod
-    def _extract_precipitation(zone, date_debut, date_fin):
-        """
-        Total precipitation from CHIRPS Daily over the period (mm).
-        FIX: use .mean() per reducer on summed image, not double .sum().
-        """
-        try:
-            # Sum daily values → total mm over the period
-            img = (
-                ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
-                .filterDate(date_debut, date_fin)
-                .sum()  # sum all daily images → total mm
-            )
-            total = (
-                img
-                .select("precipitation")
-                .reduceRegion(
-                    reducer=ee.Reducer.mean(),  # mean over the zone pixels
-                    geometry=zone,
-                    scale=5000,
-                    maxPixels=1e9
-                )
-                .get("precipitation")
-                .getInfo()
-            )
-            return round(total, 2) if total is not None else None
-        except Exception as e:
-            print(f"Error in _extract_precipitation: {e}")
-            return None
-
-    @staticmethod
-    def _extract_et(zone, date_debut, date_fin):
-        """
-        Total evapotranspiration from MODIS MOD16A2 (mm).
-        Scale factor: × 0.1. Sums 8-day composites over the period.
-        """
-        try:
-            img = (
-                ee.ImageCollection("MODIS/061/MOD16A2")
-                .filterDate(date_debut, date_fin)
-                .select("ET")
-                .sum()  # sum all 8-day composites
-            )
-            total = (
-                img
-                .reduceRegion(
-                    reducer=ee.Reducer.mean(),  # mean over the zone pixels
-                    geometry=zone,
-                    scale=500,
-                    maxPixels=1e9
-                )
-                .get("ET")
-                .getInfo()
-            )
-            if total is not None:
-                return round(total * 0.1, 2)  # apply scale factor
-            return None
-        except Exception as e:
-            print(f"Error in _extract_et: {e}")
-            return None
-
-    @staticmethod
-    def _extract_ndvi_ndwi(zone, date_debut, date_fin):
-        """
-        Median NDVI and NDWI (McFeeters) from Sentinel-2 SR.
-        Filters cloud cover < 20%.
-        Returns (ndvi, ndwi) floats.
-        """
-        try:
-            collection = (
-                ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-                .filterBounds(zone)
-                .filterDate(date_debut, date_fin)
-                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
-            )
-            median_img = collection.median()
-
-            ndvi_img = median_img.normalizedDifference(["B8", "B4"]).rename("NDVI")
-            # McFeeters NDWI for open water detection
-            ndwi_img = median_img.normalizedDifference(["B3", "B8"]).rename("NDWI")
-
-            ndvi_val = (
-                ndvi_img
-                .reduceRegion(
-                    reducer=ee.Reducer.median(),
-                    geometry=zone,
-                    scale=100,
-                    maxPixels=1e9
-                )
-                .get("NDVI")
-                .getInfo()
-            )
-            ndwi_val = (
-                ndwi_img
-                .reduceRegion(
-                    reducer=ee.Reducer.median(),
-                    geometry=zone,
-                    scale=100,
-                    maxPixels=1e9
-                )
-                .get("NDWI")
-                .getInfo()
-            )
-
-            ndvi_val = round(ndvi_val, 4) if ndvi_val is not None else None
-            ndwi_val = round(ndwi_val, 4) if ndwi_val is not None else None
-            return ndvi_val, ndwi_val
-        except Exception as e:
-            print(f"Error in _extract_ndvi_ndwi: {e}")
-            return None, None
-
-    @staticmethod
-    def _extract_water_extent(zone, date_debut, date_fin):
-        """
-        Water surface extent from Sentinel-1 SAR (km²).
-        FIX: rename water_mask band before pixelArea multiplication
-        so the reducer key is predictable ('water').
-        Threshold: VV < -16 dB → water pixel.
-        """
-        try:
-            collection = (
-                ee.ImageCollection("COPERNICUS/S1_GRD")
-                .filterBounds(zone)
-                .filterDate(date_debut, date_fin)
-                .filter(ee.Filter.listContains(
-                    "transmitterReceiverPolarisation", "VV"))
-                .filter(ee.Filter.eq("instrumentMode", "IW"))
-                .filter(ee.Filter.eq("orbitProperties_pass", "DESCENDING"))
-                .select("VV")
-            )
-            median_img = collection.median()
-
-            # FIX: rename before multiply so the band key is 'water'
-            water_mask = median_img.lt(-16).rename("water")
-            water_area_img = water_mask.multiply(ee.Image.pixelArea())
-
-            water_area_sqm = (
-                water_area_img
-                .reduceRegion(
-                    reducer=ee.Reducer.sum(),
-                    geometry=zone,
-                    scale=10,
-                    maxPixels=1e9
-                )
-                .get("water")  # FIX: was 'VV', now 'water'
-                .getInfo()
-            )
-
-            if water_area_sqm is not None:
-                return round(water_area_sqm / 1e6, 2)  # m² → km²
-            return None
-        except Exception as e:
-            print(f"Error in _extract_water_extent: {e}")
             return None
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -449,207 +335,360 @@ class GEEService:
     # ─────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def run_analysis(zone_geometry, date_debut: str, date_fin: str):
+    def run_analysis(zone_geometry, date_debut: str, date_fin: str) -> dict:
         """
-        Runs all 5 GEE extractions in parallel using ThreadPoolExecutor,
-        computes the multi-criteria decision score, and returns the full result.
+        Computes all 5 environmental indicators and returns the decision result.
+
+        Optimisations applied:
+        ┌──────────────────────────────────────────────────────────────────┐
+        │ 1. Redis cache (1 h TTL) — survives restarts, shared across     │
+        │    workers. Falls back silently if Redis is not running.        │
+        │ 2. Single .getInfo() — all 5 reductions in one HTTP request.   │
+        │    GEE parallelises independent branches server-side.           │
+        │ 3. Geometry simplification — fewer vertices, faster spatial op. │
+        │ 4. GWSA reference mean cached in memory across calls.           │
+        │ 5. .select() before .median() — only 3 S2 bands loaded.        │
+        │ 6. bestEffort=True everywhere — no silent None on large zones.  │
+        └──────────────────────────────────────────────────────────────────┘
         """
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            future_gwsa = executor.submit(
-                GEEService._extract_gwsa, zone_geometry, date_debut, date_fin)
-            future_precip = executor.submit(
-                GEEService._extract_precipitation, zone_geometry, date_debut, date_fin)
-            future_et = executor.submit(
-                GEEService._extract_et, zone_geometry, date_debut, date_fin)
-            future_ndvi_ndwi = executor.submit(
-                GEEService._extract_ndvi_ndwi, zone_geometry, date_debut, date_fin)
-            future_water = executor.submit(
-                GEEService._extract_water_extent, zone_geometry, date_debut, date_fin)
+        # ── 1. Check Redis cache ──────────────────────────────────────────────
+        zone_key  = GEEService._zone_key(zone_geometry)
+        cache_key = f"hydrosight:analysis:{zone_key}:{date_debut}:{date_fin}"
+        cached    = GEEService._cache_get(cache_key)
+        if cached:
+            return cached
 
-            gwsa             = future_gwsa.result()
-            precip           = future_precip.result()
-            et               = future_et.result()
-            ndvi, ndwi       = future_ndvi_ndwi.result()
-            water_extent_km2 = future_water.result()
+        # ── 2. Simplify geometry ──────────────────────────────────────────────
+        zone = GEEService._simplify(zone_geometry)
 
-        # Fallback to 0.0 if extraction failed
-        gwsa             = gwsa             if gwsa             is not None else 0.0
-        precip           = precip           if precip           is not None else 0.0
-        et               = et               if et               is not None else 0.0
-        ndvi             = ndvi             if ndvi             is not None else 0.0
-        ndwi             = ndwi             if ndwi             is not None else 0.0
-        water_extent_km2 = water_extent_km2 if water_extent_km2 is not None else 0.0
+        # ── 3. Prime GWSA cache (no-op if already cached) ────────────────────
+        ref_mean = GEEService._get_gwsa_ref_mean(zone)
+
+        # ── 4. Build all EE image objects — fully lazy, zero network calls ───
+
+        # CHIRPS: total precipitation over the period
+        chirps_img = (
+            ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+            .filterDate(date_debut, date_fin)
+            .sum()
+            .select("precipitation")
+        )
+
+        # MODIS MOD16A2: total evapotranspiration over the period
+        et_img = (
+            ee.ImageCollection("MODIS/061/MOD16A2")
+            .filterDate(date_debut, date_fin)
+            .select("ET")
+            .sum()
+        )
+
+        # GRACE MASCON: current period mean groundwater storage
+        grace_img = (
+            ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI")
+            .filterDate(date_debut, date_fin)
+            .mean()
+            .select("lwe_thickness")
+        )
+
+        # Sentinel-2: only load B3/B4/B8 (the 3 bands needed for NDVI + NDWI).
+        # Cuts S2 data volume to ~23% of the full 13-band collection.
+        s2_median = (
+            ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(zone)
+            .filterDate(date_debut, date_fin)
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
+            .select(["B3", "B4", "B8"])
+            .median()
+        )
+        s2_combined = (
+            s2_median.normalizedDifference(["B8", "B4"]).rename("NDVI")
+            .addBands(s2_median.normalizedDifference(["B3", "B8"]).rename("NDWI"))
+        )
+
+        # Sentinel-1 SAR: water extent (VV < -16 dB → water pixel)
+        s1_water = (
+            ee.ImageCollection("COPERNICUS/S1_GRD")
+            .filterBounds(zone)
+            .filterDate(date_debut, date_fin)
+            .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+            .filter(ee.Filter.eq("instrumentMode", "IW"))
+            .filter(ee.Filter.eq("orbitProperties_pass", "DESCENDING"))
+            .select("VV")
+            .median()
+            .lt(-16)
+            .rename("water")
+            .multiply(ee.Image.pixelArea())
+        )
+
+        # ── 5. Build reductions — still lazy, no network calls yet ───────────
+        precip_val = chirps_img.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=zone, scale=5000, maxPixels=1e9, bestEffort=True,
+        ).get("precipitation")
+
+        et_val = et_img.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=zone, scale=500, maxPixels=1e9, bestEffort=True,
+        ).get("ET")
+
+        grace_val = grace_img.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=zone, scale=5000, maxPixels=1e9, bestEffort=True,
+        ).get("lwe_thickness")
+
+        s2_dict = s2_combined.reduceRegion(
+            reducer=ee.Reducer.median(),
+            geometry=zone, scale=100, maxPixels=1e9, bestEffort=True,
+        )
+
+        water_val = s1_water.reduceRegion(
+            reducer=ee.Reducer.sum(),
+            geometry=zone, scale=100, maxPixels=1e9, bestEffort=True,
+        ).get("water")
+
+        # ── 6. SINGLE .getInfo() — one HTTP request to GEE ───────────────────
+        # GEE evaluates all 5 branches in parallel on its servers and returns
+        # everything in one response.
+        try:
+            raw = ee.Dictionary({
+                "precip":          precip_val,
+                "et_raw":          et_val,
+                "gwsa_current":    grace_val,
+                "ndvi":            s2_dict.get("NDVI"),
+                "ndwi":            s2_dict.get("NDWI"),
+                "water_area_sqm":  water_val,
+            }).getInfo()
+        except Exception as e:
+            print(f"Error in run_analysis .getInfo(): {e}")
+            raw = {}
+
+        # ── 7. Post-process raw values ────────────────────────────────────────
+        precip           = round(raw.get("precip") or 0.0, 2)
+        et_raw_val       = raw.get("et_raw")
+        et               = round(et_raw_val * 0.1, 2) if et_raw_val is not None else 0.0
+        gwsa_current     = raw.get("gwsa_current")
+        gwsa             = round(gwsa_current - ref_mean, 3) if (gwsa_current is not None and ref_mean is not None) else 0.0
+        ndvi             = round(raw.get("ndvi") or 0.0, 4)
+        ndwi             = round(raw.get("ndwi") or 0.0, 4)
+        water_sqm        = raw.get("water_area_sqm")
+        water_extent_km2 = round(water_sqm / 1e6, 2) if water_sqm is not None else 0.0
 
         climate_water_balance = round(precip - et, 2)
 
-        # ── Multi-criteria scoring ────────────────────────────────────────────
+        # ── 8. Multi-criteria scoring ─────────────────────────────────────────
         score = 0
 
-        # Groundwater
         if gwsa < -15:
             score += 3
         elif gwsa < -5:
             score += 2
 
-        # Climate water balance
         if climate_water_balance < 0:
             score += 2
         elif climate_water_balance < 50:
             score += 1
 
-        # Land use pressure
         if ndvi > 0.6 and ndwi > 0.3:
-            score += 2   # intensive irrigation detected
+            score += 2
         elif ndvi > 0.4:
-            score += 1   # moderate vegetation/usage
+            score += 1
 
-        # Surface water scarcity
         if water_extent_km2 < 50:
             score += 1
 
-        # ── Classification ───────────────────────────────────────────────────
+        # ── 9. Classification ─────────────────────────────────────────────────
         if score >= 7:
-            status = "CRITICAL"
+            status         = "CRITICAL"
             recommendation = "Crise hydrique sévère. Arrêt immédiat obligatoire."
         elif score >= 5:
-            status = "PROHIBITED"
+            status         = "PROHIBITED"
             recommendation = "Surexploitation détectée. Nouveaux forages interdits."
         elif score >= 3:
-            status = "MODERATED"
+            status         = "MODERATED"
             recommendation = "Stress modéré détecté. Quotas d'irrigation recommandés."
         else:
-            status = "ALLOWED"
+            status         = "ALLOWED"
             recommendation = "Ressources en bon état. Utilisation normale autorisée."
 
-        return {
+        result = {
             "groundwater": {
-                "gwsa": gwsa,
-                "precipitation": precip,
-                "et": et,
-                "climate_water_balance": climate_water_balance
+                "gwsa":                  gwsa,
+                "precipitation":         precip,
+                "et":                    et,
+                "climate_water_balance": climate_water_balance,
             },
-            "surface_water": {
-                "water_extent_km2": water_extent_km2
-            },
-            "land_use": {
-                "ndvi": ndvi,
-                "ndwi": ndwi
-            },
+            "surface_water": {"water_extent_km2": water_extent_km2},
+            "land_use":      {"ndvi": ndvi, "ndwi": ndwi},
             "decision": {
-                "score": score,
-                "status": status,
-                "recommendation": recommendation
-            }
+                "score":          score,
+                "status":         status,
+                "recommendation": recommendation,
+            },
         }
+
+        # ── 10. Store in Redis ────────────────────────────────────────────────
+        GEEService._cache_set(cache_key, result)
+        return result
 
     # ─────────────────────────────────────────────────────────────────────────
     # TIME SERIES
     # ─────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def get_timeseries(zone_geometry, date_debut: str, date_fin: str, dataset: str):
+    def _timeseries_chirps_server_side(zone, date_debut: str, date_fin: str) -> list:
         """
-        Returns monthly time series for a given dataset.
-        FIX (GRACE): subtracts reference mean to return anomaly, not raw value.
-
-        dataset options: "grace" | "chirps" | "ndvi"
-        Returns: [{ "date": "2023-01", "value": float }, ...]
+        CHIRPS monthly precipitation — ALL months in ONE .getInfo() call.
+        Uses server-side ee.List.map() to build a FeatureCollection of monthly
+        sums, then retrieves everything at once.
         """
-        try:
-            start  = ee.Date(date_debut)
-            end    = ee.Date(date_fin)
-            n_months = end.difference(start, "month").ceil()
+        start   = ee.Date(date_debut)
+        n       = int(ee.Date(date_fin).difference(start, "month").ceil().getInfo())
+        offsets = ee.List.sequence(0, n - 1)
 
-            # Reference mean for GRACE anomaly (computed once, outside the map)
-            grace_ref_mean = None
-            if dataset == "grace":
-                grace_ref_mean = (
-                    ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI")
-                    .filterDate("2004-01-01", "2023-12-31")
-                    .mean()
-                    .select("lwe_thickness")
+        def monthly_feature(offset):
+            offset = ee.Number(offset)
+            d1     = start.advance(offset, "month")
+            d2     = d1.advance(1, "month")
+            val    = (
+                ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+                .filterDate(d1, d2)
+                .sum()
+                .select("precipitation")
+                .reduceRegion(
+                    reducer=ee.Reducer.mean(),
+                    geometry=zone, scale=5000,
+                    maxPixels=1e9, bestEffort=True,
+                )
+                .get("precipitation")
+            )
+            return ee.Feature(None, {"date": d1.format("YYYY-MM"), "value": val})
+
+        raw    = ee.FeatureCollection(offsets.map(monthly_feature)).getInfo()
+        result = []
+        for f in raw.get("features", []):
+            p = f.get("properties", {})
+            if p.get("value") is not None:
+                result.append({"date": p["date"], "value": round(p["value"], 2)})
+        return sorted(result, key=lambda x: x["date"])
+
+    @staticmethod
+    def _timeseries_grace_server_side(zone, date_debut: str, date_fin: str) -> list:
+        """
+        GRACE monthly anomaly — ALL months in ONE .getInfo() call.
+        Reference mean (cached) is passed as an ee.Number into the server-side
+        map function so the anomaly subtraction happens inside GEE, not Python.
+        """
+        ref_mean = GEEService._get_gwsa_ref_mean(zone)
+        ref_ee   = ee.Number(ref_mean if ref_mean is not None else 0.0)
+
+        start   = ee.Date(date_debut)
+        n       = int(ee.Date(date_fin).difference(start, "month").ceil().getInfo())
+        offsets = ee.List.sequence(0, n - 1)
+
+        def monthly_feature(offset):
+            offset  = ee.Number(offset)
+            d1      = start.advance(offset, "month")
+            d2      = d1.advance(1, "month")
+            raw_val = (
+                ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI")
+                .filterDate(d1, d2)
+                .mean()
+                .select("lwe_thickness")
+                .reduceRegion(
+                    reducer=ee.Reducer.mean(),
+                    geometry=zone, scale=5000,
+                    maxPixels=1e9, bestEffort=True,
+                )
+                .get("lwe_thickness")
+            )
+            anomaly = ee.Number(raw_val).subtract(ref_ee)
+            return ee.Feature(None, {"date": d1.format("YYYY-MM"), "value": anomaly})
+
+        raw    = ee.FeatureCollection(offsets.map(monthly_feature)).getInfo()
+        result = []
+        for f in raw.get("features", []):
+            p = f.get("properties", {})
+            if p.get("value") is not None:
+                result.append({"date": p["date"], "value": round(p["value"], 3)})
+        return sorted(result, key=lambda x: x["date"])
+
+    @staticmethod
+    def _timeseries_ndvi_parallel(zone, date_debut: str, date_fin: str) -> list:
+        """
+        NDVI monthly series — parallel ThreadPoolExecutor.
+        Sentinel-2 monthly composites are too heavy for server-side ee.List.map()
+        on large zones (GEE memory limits), so we keep client-side parallelism
+        with one thread per month.
+        Only B4 + B8 are loaded per image (NDVI only needs these two bands).
+        """
+        start = ee.Date(date_debut)
+        n     = int(ee.Date(date_fin).difference(start, "month").ceil().getInfo())
+
+        def fetch_month(i: int):
+            d1    = ee.Date(date_debut).advance(i, "month")
+            d2    = d1.advance(1, "month")
+            label = d1.format("YYYY-MM").getInfo()
+            try:
+                val = (
+                    ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+                    .filterBounds(zone)
+                    .filterDate(d1, d2)
+                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
+                    .select(["B4", "B8"])
+                    .median()
+                    .normalizedDifference(["B8", "B4"])
+                    .rename("NDVI")
                     .reduceRegion(
-                        reducer=ee.Reducer.mean(),
-                        geometry=zone_geometry,
-                        scale=5000,
-                        maxPixels=1e9
+                        reducer=ee.Reducer.median(),
+                        geometry=zone, scale=100,
+                        maxPixels=1e9, bestEffort=True,
                     )
-                    .get("lwe_thickness")
+                    .get("NDVI")
                     .getInfo()
                 )
+                return (i, label, round(val, 4) if val is not None else None)
+            except Exception as e:
+                print(f"Error NDVI month {i}: {e}")
+                return (i, label, None)
 
-            def get_monthly_value(month_offset):
-                d1 = start.advance(month_offset, "month")
-                d2 = d1.advance(1, "month")
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+            futures = {ex.submit(fetch_month, i): i for i in range(n)}
+            for future in concurrent.futures.as_completed(futures):
+                results.append(future.result())
 
-                if dataset == "grace":
-                    img = (
-                        ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/MASCON_CRI")
-                        .filterDate(d1, d2)
-                        .mean()
-                        .select("lwe_thickness")
-                    )
-                    val = img.reduceRegion(
-                        reducer=ee.Reducer.mean(),
-                        geometry=zone_geometry,
-                        scale=5000,
-                        maxPixels=1e9
-                    ).get("lwe_thickness").getInfo()
-                    # FIX: subtract reference to return anomaly
-                    if val is not None and grace_ref_mean is not None:
-                        val = round(val - grace_ref_mean, 3)
+        results.sort(key=lambda x: x[0])
+        return [
+            {"date": label, "value": val}
+            for (_, label, val) in results
+            if val is not None
+        ]
 
-                elif dataset == "chirps":
-                    img = (
-                        ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
-                        .filterDate(d1, d2)
-                        .sum()
-                        .select("precipitation")
-                    )
-                    val = img.reduceRegion(
-                        reducer=ee.Reducer.mean(),
-                        geometry=zone_geometry,
-                        scale=5000,
-                        maxPixels=1e9
-                    ).get("precipitation").getInfo()
-                    if val is not None:
-                        val = round(val, 2)
+    @staticmethod
+    def get_timeseries(
+        zone_geometry, date_debut: str, date_fin: str, dataset: str
+    ) -> list:
+        """
+        Returns monthly time series for a given dataset.
 
-                elif dataset == "ndvi":
-                    collection = (
-                        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-                        .filterBounds(zone_geometry)
-                        .filterDate(d1, d2)
-                        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
-                    )
-                    img = collection.median().normalizedDifference(
-                        ["B8", "B4"]).rename("NDVI")
-                    val = img.reduceRegion(
-                        reducer=ee.Reducer.median(),
-                        geometry=zone_geometry,
-                        scale=100,
-                        maxPixels=1e9
-                    ).get("NDVI").getInfo()
-                    if val is not None:
-                        val = round(val, 4)
+        dataset = "chirps" → single .getInfo() via server-side ee.List.map()
+        dataset = "grace"  → single .getInfo() via server-side ee.List.map()
+        dataset = "ndvi"   → parallel ThreadPoolExecutor (S2 too heavy for
+                             server-side map on large zones)
 
-                else:
-                    val = None
-
-                return val
-
-            # Build month labels
-            n = int(n_months.getInfo())
-            timeseries = []
-            for i in range(n):
-                d1 = start.advance(i, "month")
-                label = d1.format("YYYY-MM").getInfo()
-                value = get_monthly_value(i)
-                if value is not None:
-                    timeseries.append({"date": label, "value": value})
-
-            return timeseries
-
+        Returns: [{ "date": "YYYY-MM", "value": float }, ...]
+        """
+        zone = GEEService._simplify(zone_geometry)
+        try:
+            if dataset == "chirps":
+                return GEEService._timeseries_chirps_server_side(zone, date_debut, date_fin)
+            elif dataset == "grace":
+                return GEEService._timeseries_grace_server_side(zone, date_debut, date_fin)
+            elif dataset == "ndvi":
+                return GEEService._timeseries_ndvi_parallel(zone, date_debut, date_fin)
+            else:
+                print(f"Unknown dataset: {dataset}")
+                return []
         except Exception as e:
             print(f"Error in get_timeseries ({dataset}): {e}")
             return []
