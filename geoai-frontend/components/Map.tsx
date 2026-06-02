@@ -1,12 +1,23 @@
 "use client";
 
 import { MapContainer, TileLayer, useMapEvents, useMap, GeoJSON } from "react-leaflet";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-draw/dist/leaflet.draw.css";
 import "leaflet-draw";
 import MapLegend from "./MapLegend";
+import { getApiBaseUrl } from "@/lib/apiBase";
+
+const API_BASE = getApiBaseUrl();
+
+async function fetchJson(path: string): Promise<unknown> {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} — ${path}`);
+  }
+  return res.json();
+}
 
 /* 🌍 Land use labels */
 const landClasses: Record<number, string> = {
@@ -37,8 +48,8 @@ function ClickHandler({ setInfo, activeModule, activeMode, setZoneSelection }: a
         // Handle info clicks
         const endpoint =
           activeModule === "lu"
-            ? "http://127.0.0.1:8000/landcover-point"
-            : "http://127.0.0.1:8000/ndvi";
+            ? `${API_BASE}/landcover-point`
+            : `${API_BASE}/ndvi`;
 
         fetch(endpoint, {
           method: "POST",
@@ -161,49 +172,53 @@ export default function Map({ activeMode, setZoneSelection, analysisStatus, reso
 
   /* 🌿 NDVI map */
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/ndvi-map")
-      .then(res => res.json())
-      .then(data => setNdviUrl(data.tile_url))
-      .catch(err => console.error("NDVI ERROR:", err));
+    fetchJson("/ndvi-map")
+      .then((data: { tile_url?: string }) => setNdviUrl(data.tile_url ?? null))
+      .catch((err) =>
+        console.warn(
+          `NDVI overlay unavailable (${API_BASE}). Start the FastAPI backend.`,
+          err
+        )
+      );
   }, []);
 
   /* 🏙️ Land use map */
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/landcover-map")
-      .then(res => res.json())
-      .then(data => setLandUseUrl(data.tile_url))
-      .catch(err => console.error("LAND ERROR:", err));
+    fetchJson("/landcover-map")
+      .then((data: { tile_url?: string }) => setLandUseUrl(data.tile_url ?? null))
+      .catch((err) =>
+        console.warn(
+          `Land cover overlay unavailable (${API_BASE}). Start the FastAPI backend.`,
+          err
+        )
+      );
   }, []);
 
   /* 💧 GWSA map */
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/gwsa-map")
-      .then(res => res.json())
-      .then(data => setGwsaUrl(data.tile_url))
-      .catch(err => console.log("GWSA ERROR (endpoint not ready):", err));
+    fetchJson("/gwsa-map")
+      .then((data: { tile_url?: string }) => setGwsaUrl(data.tile_url ?? null))
+      .catch((err) => console.warn("GWSA overlay unavailable:", err));
   }, []);
 
   /* 🌊 Water extent map */
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/water-extent-map")
-      .then(res => res.json())
-      .then(data => setWaterExtentUrl(data.tile_url))
-      .catch(err => console.log("Water extent ERROR (endpoint not ready):", err));
+    fetchJson("/water-extent-map")
+      .then((data: { tile_url?: string }) => setWaterExtentUrl(data.tile_url ?? null))
+      .catch((err) => console.warn("Water extent overlay unavailable:", err));
   }, []);
 
   /* Load Provinces & Regions */
   useEffect(() => {
     if (activeMode === "province" && !provincesGeojson) {
-      fetch("http://127.0.0.1:8000/zones/provinces")
-        .then(res => res.json())
-        .then(data => setProvincesGeojson(data))
-        .catch(err => console.error(err));
+      fetchJson("/zones/provinces")
+        .then((data) => setProvincesGeojson(data))
+        .catch((err) => console.error("Provinces load failed:", err));
     }
     if (activeMode === "region" && !regionsGeojson) {
-      fetch("http://127.0.0.1:8000/zones/regions")
-        .then(res => res.json())
-        .then(data => setRegionsGeojson(data))
-        .catch(err => console.error(err));
+      fetchJson("/zones/regions")
+        .then((data) => setRegionsGeojson(data))
+        .catch((err) => console.error("Regions load failed:", err));
     }
     
     if (activeMode === "national") {
@@ -248,13 +263,34 @@ export default function Map({ activeMode, setZoneSelection, analysisStatus, reso
     }
   };
 
-  const mapKey = useMemo(() => "map-" + Math.random(), []);
+  const [mapMounted, setMapMounted] = useState(false);
+  const mapRootId = "hydrosight-leaflet-root";
+
+  useEffect(() => {
+    setMapMounted(true);
+    return () => {
+      setMapMounted(false);
+      const el = document.getElementById(mapRootId);
+      if (el) {
+        el.innerHTML = "";
+        delete (el as HTMLElement & { _leaflet_id?: number })._leaflet_id;
+      }
+    };
+  }, []);
 
   return (
-    <div style={{ height: "100%", width: "100%", position: "relative" }}>
-
+    <div
+      style={{
+        height: "100%",
+        width: "100%",
+        position: "relative",
+        minHeight: 0,
+      }}
+    >
+      <div id={mapRootId} style={{ height: "100%", width: "100%" }}>
+        {mapMounted && (
       <MapContainer
-        key={mapKey}
+        key="hydrosight-main-map"
         center={[31.7917, -7.0926]}
         zoom={6}
         style={{ height: "100%", width: "100%" }}
@@ -324,6 +360,8 @@ export default function Map({ activeMode, setZoneSelection, analysisStatus, reso
            />
         )}
       </MapContainer>
+        )}
+      </div>
 
       <MapLegend activeModule={activeModule} />
 

@@ -2,6 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
+import { useAuth } from "@/hooks/useAuth";
+import HydroSightLogo from "@/components/HydroSightLogo";
+import LogoutButton from "@/components/LogoutButton";
+import { logoutAndRedirect } from "@/services/auth";
 
 // ── Animated counter hook ──────────────────────────────────────────────────
 function useCounter(end: number, duration = 2000, start = false) {
@@ -34,27 +38,141 @@ function useInView(threshold = 0.2) {
 
 // ── Demo Video Component ───────────────────────────────────────────────────
 function DemoVideo() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
+
+    video.addEventListener("play", handlePlay);
+    video.addEventListener("pause", handlePause);
+    video.addEventListener("playing", handlePlay);
+
+    // Try to detect if already playing (autoplays)
+    if (!video.paused) {
+      setIsPlaying(true);
+    }
+
+    return () => {
+      video.removeEventListener("play", handlePlay);
+      video.removeEventListener("pause", handlePause);
+      video.removeEventListener("playing", handlePlay);
+    };
+  }, []);
+
+  const handleTogglePlay = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play().catch((err) => {
+        console.log("Play failed:", err);
+      });
+    } else {
+      video.pause();
+    }
+  };
+
   return (
-    <div style={{
-      borderRadius: 20,
-      overflow: "hidden",
-      border: "1px solid rgba(56,189,248,0.15)",
-      boxShadow: "0 40px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(56,189,248,0.08)",
-      background: "#0a1628",
-      position: "relative",
-    }}>
+    <div
+      onClick={handleTogglePlay}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      style={{
+        borderRadius: 20,
+        overflow: "hidden",
+        border: "1px solid rgba(56,189,248,0.15)",
+        boxShadow: "0 40px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(56,189,248,0.08)",
+        background: "#0a1628",
+        position: "relative",
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        aspectRatio: "16/9",
+      }}
+    >
       <video
-        src="/mp_.mp4"
+        ref={videoRef}
         autoPlay
         loop
         muted
         playsInline
         style={{
           width: "100%",
+          height: "100%",
+          objectFit: "cover",
           display: "block",
           borderRadius: 20,
         }}
-      />
+      >
+        <source src="/mp_.mp4" type="video/mp4" />
+      </video>
+
+      {/* Overlay play button & info */}
+      {(!isPlaying || isHovered) && (
+        <div style={{
+          position: "absolute",
+          inset: 0,
+          background: isPlaying ? "rgba(4, 8, 15, 0.35)" : "rgba(4, 8, 15, 0.75)",
+          backdropFilter: isPlaying ? "none" : "blur(8px)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 16,
+          transition: "all 0.3s ease",
+          zIndex: 2,
+        }}>
+          {/* Pulsing Play/Pause button */}
+          <div style={{
+            width: 72,
+            height: 72,
+            borderRadius: "50%",
+            background: "linear-gradient(135deg, #0ea5e9, #6366f1)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: isPlaying
+              ? "0 4px 12px rgba(14,165,233,0.3)"
+              : "0 12px 36px rgba(14,165,233,0.5)",
+            transform: isHovered ? "scale(1.1)" : "scale(1)",
+            transition: "all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275)",
+          }}>
+            {isPlaying ? (
+              <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ width: 6, height: 24, background: "#fff", borderRadius: 2 }} />
+                <div style={{ width: 6, height: 24, background: "#fff", borderRadius: 2 }} />
+              </div>
+            ) : (
+              <div style={{
+                width: 0,
+                height: 0,
+                borderStyle: "solid",
+                borderWidth: "12px 0 12px 20px",
+                borderColor: "transparent transparent transparent #ffffff",
+                marginLeft: 6,
+              }} />
+            )}
+          </div>
+
+          {!isPlaying && (
+            <div style={{ textAlign: "center" }}>
+              <h4 style={{ fontSize: 16, fontWeight: 700, letterSpacing: "0.05em", color: "#fff", marginBottom: 4 }}>
+                Watch the Platform Walkthrough
+              </h4>
+              <p style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+                Click anywhere to play demo video
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={{
         position: "absolute",
         inset: 0,
@@ -71,13 +189,14 @@ const faqs = [
   { q: "What satellite data does GeoAI use?", a: "GeoAI uses Sentinel-2 imagery via Google Earth Engine, providing high-resolution multispectral data updated every 5 days globally." },
   { q: "What geographic scales are supported?", a: "From a single point to national scale — you can select a point, draw a bounding box, pick a province/region, or run country-wide analysis." },
   { q: "How is the AI analysis performed?", a: "The backend (FastAPI + GEE) computes indices like NDVI and runs land cover classification in real time, returning results directly to your interactive map." },
-  { q: "Is authentication required?", a: "Yes. The platform uses JWT-based authentication with role-based access control (user/admin) for secure API communication." },
+  { q: "Do I need an account?", a: "No. Try the demo without signing up (2 analyses per day, point mode, land cover module). A free account unlocks 10 analyses per month, bbox selection, and saved usage." },
   { q: "Can I run time series analysis?", a: "Absolutely. You can monitor any environmental indicator over a custom time period and view temporal trends in the dashboard charts." },
 ];
 
 // ── Main Landing Page ──────────────────────────────────────────────────────
 export default function LandingPage() {
   const router = useRouter();
+  const { isLoggedIn } = useAuth();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const { ref: statsRef, inView: statsVisible } = useInView();
 
@@ -147,22 +266,32 @@ export default function LandingPage() {
         position: "sticky", top: 0, zIndex: 100,
         background: "rgba(4,8,15,0.85)", backdropFilter: "blur(20px)",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: "linear-gradient(135deg, #0ea5e9, #6366f1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>🌍</div>
-          <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.02em" }}>GeoAI</span>
-          <span style={{ fontSize: 10, background: "rgba(56,189,248,0.15)", border: "1px solid rgba(56,189,248,0.3)", color: "#38bdf8", padding: "2px 8px", borderRadius: 20, letterSpacing: "0.06em", fontWeight: 600 }}>PLATFORM</span>
-        </div>
+        <HydroSightLogo href="/" maxWidth={160} priority />
         <nav style={{ display: "flex", gap: 32, fontSize: 13, color: "rgba(255,255,255,0.45)" }}>
-          {["features","how","tech","usecases","faq"].map(id => (
-            <a key={id} href={`#${id}`} style={{ textDecoration: "none", color: "inherit", transition: "color 0.2s", textTransform: "capitalize" }}
+          {["features","how","tech","usecases","pricing","faq"].map(id => (
+            <a key={id} href={id === "pricing" ? "/pricing" : `#${id}`} style={{ textDecoration: "none", color: "inherit", transition: "color 0.2s", textTransform: "capitalize" }}
               onMouseEnter={e => (e.currentTarget.style.color = "#fff")}
               onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.45)")}
-            >{id === "how" ? "How it works" : id === "usecases" ? "Use Cases" : id.charAt(0).toUpperCase()+id.slice(1)}</a>
+            >{id === "how" ? "How it works" : id === "usecases" ? "Use Cases" : id === "pricing" ? "Pricing" : id.charAt(0).toUpperCase()+id.slice(1)}</a>
           ))}
         </nav>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => router.push("/login")} className="btn-ghost" style={{ padding: "8px 20px", fontSize: 13 }}>Sign in</button>
-          <button onClick={() => router.push("/register")} className="btn-primary" style={{ padding: "8px 20px", fontSize: 13 }}>Get Started →</button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {isLoggedIn ? (
+            <>
+              <LogoutButton onClick={() => logoutAndRedirect()} />
+              <button onClick={() => router.push("/dashboard")} className="btn-primary" style={{ padding: "8px 20px", fontSize: 13 }}>
+                Tableau de bord →
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => router.push("/dashboard")} className="btn-ghost" style={{ padding: "8px 20px", fontSize: 13 }}>
+                Essayer sans compte
+              </button>
+              <button onClick={() => router.push("/login")} className="btn-ghost" style={{ padding: "8px 20px", fontSize: 13 }}>Sign in</button>
+              <button onClick={() => router.push("/register")} className="btn-primary" style={{ padding: "8px 20px", fontSize: 13 }}>Get Started →</button>
+            </>
+          )}
         </div>
       </header>
 
@@ -190,8 +319,15 @@ export default function LandingPage() {
           </p>
 
           <div className="hero-cta" style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 40 }}>
-            <button onClick={() => router.push("/register")} className="btn-primary">Start Analyzing Free →</button>
-            <button onClick={() => router.push("/login")} className="btn-ghost">Sign In</button>
+            {isLoggedIn ? (
+              <button onClick={() => router.push("/dashboard")} className="btn-primary">Ouvrir le tableau de bord →</button>
+            ) : (
+              <>
+                <button onClick={() => router.push("/dashboard")} className="btn-primary">Essayer sans compte</button>
+                <button onClick={() => router.push("/register")} className="btn-ghost">Créer un compte gratuit</button>
+                <button onClick={() => router.push("/login")} className="btn-ghost">Sign In</button>
+              </>
+            )}
           </div>
 
           <div className="hero-cta" style={{ display: "flex", gap: 28 }}>
@@ -433,8 +569,14 @@ export default function LandingPage() {
             Start analyzing satellite imagery in seconds. No setup. No hardware. Just intelligence.
           </p>
           <div style={{ display: "flex", gap: 14, justifyContent: "center" }}>
-            <button onClick={() => router.push("/register")} className="btn-primary" style={{ padding: "16px 40px", fontSize: 15 }}>Create Free Account →</button>
-            <button onClick={() => router.push("/login")} className="btn-ghost" style={{ padding: "16px 40px", fontSize: 15 }}>Sign In</button>
+            {isLoggedIn ? (
+              <button onClick={() => router.push("/dashboard")} className="btn-primary" style={{ padding: "16px 40px", fontSize: 15 }}>Continuer sur le tableau de bord →</button>
+            ) : (
+              <>
+                <button onClick={() => router.push("/register")} className="btn-primary" style={{ padding: "16px 40px", fontSize: 15 }}>Create Free Account →</button>
+                <button onClick={() => router.push("/login")} className="btn-ghost" style={{ padding: "16px 40px", fontSize: 15 }}>Sign In</button>
+              </>
+            )}
           </div>
         </div>
       </section>

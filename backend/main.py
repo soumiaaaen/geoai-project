@@ -1,7 +1,16 @@
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Load backend/.env so SUPABASE_JWT_SECRET is available to auth.py
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
 from gee.client import initialize_gee
 from api.routes import router
+from api.subscription import router as subscription_router
+from api.guest_routes import router as guest_router
 
 app = FastAPI(title="GeoAI GEE Backend")
 
@@ -17,6 +26,8 @@ app.add_middleware(
 initialize_gee()
 
 app.include_router(router)
+app.include_router(subscription_router)
+app.include_router(guest_router)
 
 @app.get("/")
 def home():

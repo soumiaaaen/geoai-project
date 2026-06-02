@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient'
+import { ensureProfile } from './subscription'
 
 export const authService = {
   async signUp(email: string, password: string) {
@@ -40,6 +41,9 @@ export async function register(email: string, password: string, fullName?: strin
     }
   })
   if (error) throw error
+  if (data.user?.id) {
+    await ensureProfile(data.user.id)
+  }
   return data
 }
 
@@ -52,6 +56,16 @@ export async function login(email: string, password: string) {  // 👈 renamed 
 export async function signOut() {
   const { error } = await supabase.auth.signOut()
   if (error) throw error
+}
+
+export async function logoutAndRedirect() {
+  try {
+    await signOut()
+  } finally {
+    if (typeof window !== "undefined") {
+      window.location.href = "/login"
+    }
+  }
 }
 
 export async function getSession() {

@@ -63,9 +63,20 @@ type ChartProps = {
   dateDebut: string;
   dateFin: string;
   activeModule: string;
+  canExportPdf?: boolean;
+  canExportExcel?: boolean;
+  onUpgradeRequired?: (message: string) => void;
 };
 
-export default function Charts({ zoneSelection, dateDebut, dateFin, activeModule }: ChartProps) {
+export default function Charts({
+  zoneSelection,
+  dateDebut,
+  dateFin,
+  activeModule,
+  canExportPdf = false,
+  canExportExcel = false,
+  onUpgradeRequired,
+}: ChartProps) {
   const [exportingPDF, setExportingPDF] = useState(false);
   const [exportingExcel, setExportingExcel] = useState(false);
 
@@ -84,11 +95,15 @@ export default function Charts({ zoneSelection, dateDebut, dateFin, activeModule
   });
 
   const handleExportPDF = async () => {
+    if (!canExportPdf) {
+      onUpgradeRequired?.("L'export PDF est disponible à partir du plan Pro.");
+      return;
+    }
     setExportingPDF(true);
     try {
       await exportFullPdf(buildReportData());
       alert("PDF téléchargé avec succès!");
-    } catch (e) {
+    } catch {
       alert("Erreur lors de la génération du PDF");
     } finally {
       setExportingPDF(false);
@@ -96,11 +111,15 @@ export default function Charts({ zoneSelection, dateDebut, dateFin, activeModule
   };
 
   const handleExportExcel = () => {
+    if (!canExportExcel) {
+      onUpgradeRequired?.("L'export Excel est disponible à partir du plan Pro.");
+      return;
+    }
     setExportingExcel(true);
     try {
       exportFullExcel(buildReportData());
       alert("Excel téléchargé avec succès!");
-    } catch (e) {
+    } catch {
       alert("Erreur lors de la génération du fichier Excel");
     } finally {
       setExportingExcel(false);
@@ -299,10 +318,12 @@ export default function Charts({ zoneSelection, dateDebut, dateFin, activeModule
       {/* EXPORT BUTTONS */}
       <div style={{ display: "flex", gap: "10px", marginTop: "10px", paddingBottom: "20px" }}>
         <button
+          type="button"
           onClick={handleExportPDF}
           disabled={exportingPDF || exportingExcel}
+          title={canExportPdf ? undefined : "Plan Pro requis"}
           style={{
-            flex: 1, padding: "8px", background: "transparent", border: "1px solid #00C9B1", color: "#00C9B1", borderRadius: "4px", fontSize: "13px", fontWeight: "bold", cursor: exportingPDF || exportingExcel ? "not-allowed" : "pointer", transition: "all 0.2s", opacity: exportingPDF || exportingExcel ? 0.65 : 1
+            flex: 1, padding: "8px", background: "transparent", border: "1px solid #00C9B1", color: canExportPdf ? "#00C9B1" : "var(--text-muted)", borderRadius: "4px", fontSize: "13px", fontWeight: "bold", cursor: exportingPDF || exportingExcel ? "not-allowed" : "pointer", transition: "all 0.2s", opacity: exportingPDF || exportingExcel ? 0.65 : canExportPdf ? 1 : 0.5
           }}
           onMouseOver={(e) => {
             if (!(exportingPDF || exportingExcel)) {
@@ -315,13 +336,15 @@ export default function Charts({ zoneSelection, dateDebut, dateFin, activeModule
             e.currentTarget.style.color = "#00C9B1";
           }}
         >
-          {exportingPDF ? "Génération..." : "📄 Exporter PDF"}
+          {exportingPDF ? "Génération..." : canExportPdf ? "📄 Exporter PDF" : "📄 PDF (Pro)"}
         </button>
         <button
+          type="button"
           onClick={handleExportExcel}
           disabled={exportingPDF || exportingExcel}
+          title={canExportExcel ? undefined : "Plan Pro requis"}
           style={{
-            flex: 1, padding: "8px", background: "transparent", border: "1px solid #00C9B1", color: "#00C9B1", borderRadius: "4px", fontSize: "13px", fontWeight: "bold", cursor: exportingPDF || exportingExcel ? "not-allowed" : "pointer", transition: "all 0.2s", opacity: exportingPDF || exportingExcel ? 0.65 : 1
+            flex: 1, padding: "8px", background: "transparent", border: "1px solid #00C9B1", color: canExportExcel ? "#00C9B1" : "var(--text-muted)", borderRadius: "4px", fontSize: "13px", fontWeight: "bold", cursor: exportingPDF || exportingExcel ? "not-allowed" : "pointer", transition: "all 0.2s", opacity: exportingPDF || exportingExcel ? 0.65 : canExportExcel ? 1 : 0.5
           }}
           onMouseOver={(e) => {
             if (!(exportingPDF || exportingExcel)) {
@@ -334,7 +357,7 @@ export default function Charts({ zoneSelection, dateDebut, dateFin, activeModule
             e.currentTarget.style.color = "#00C9B1";
           }}
         >
-          {exportingExcel ? "Génération..." : "📊 Exporter Excel"}
+          {exportingExcel ? "Génération..." : canExportExcel ? "📊 Exporter Excel" : "📊 Excel (Pro)"}
         </button>
       </div>
 

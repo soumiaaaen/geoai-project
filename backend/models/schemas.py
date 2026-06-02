@@ -16,3 +16,4 @@ class AnalyseRequest(BaseModel):
     zoneSelection: ZoneSelection
     dateDebut: str   # "YYYY-MM-DD"
     dateFin: str     # "YYYY-MM-DD"
+    activeModule: Optional[str] = "gw"  # gw | sw | lu

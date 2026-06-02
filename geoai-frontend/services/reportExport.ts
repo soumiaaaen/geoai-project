@@ -109,24 +109,57 @@ function buildSeriesTable(title: string, months: string[], values: number[]): st
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
-  const width = 860;
-  const height = 180;
+  const width = 820;
+  const height = 160;
+  const paddingLeft = 45;
+  const paddingBottom = 25;
+  const chartW = width - paddingLeft;
+  const chartH = height - paddingBottom;
+
   const points = values
     .map((v, i) => {
-      const x = (i / Math.max(values.length - 1, 1)) * width;
-      const y = height - ((v - min) / range) * (height - 20) - 10;
+      const x = paddingLeft + (i / Math.max(values.length - 1, 1)) * chartW;
+      const y = chartH - ((v - min) / range) * (chartH - 10);
       return `${x},${y}`;
     })
     .join(" ");
+
+  // Y-axis labels (5 ticks)
+  const yTicks = Array.from({ length: 5 }, (_, i) => {
+    const val = min + (range * i) / 4;
+    const y = chartH - ((val - min) / range) * (chartH - 10);
+    return `
+      <line x1="${paddingLeft - 4}" y1="${y}" x2="${paddingLeft}" y2="${y}" stroke="#475569" stroke-width="1"/>
+      <text x="${paddingLeft - 6}" y="${y + 4}" text-anchor="end" font-size="10" fill="#94a3b8">${val.toFixed(1)}</text>
+    `;
+  }).join("");
+
+  // X-axis labels (months)
+  const xLabels = months
+    .map((m, i) => {
+      const x = paddingLeft + (i / Math.max(months.length - 1, 1)) * chartW;
+      return `<text x="${x}" y="${chartH + 18}" text-anchor="middle" font-size="10" fill="#94a3b8">${m}</text>`;
+    })
+    .join("");
+
   const rows = months
     .map((month, i) => `<tr><td style="padding: 6px; border: 1px solid #334155;">${month}</td><td style="padding: 6px; border: 1px solid #334155; text-align: right;">${values[i]}</td></tr>`)
     .join("");
+
   return `
     <div style="${cardStyle}; margin-bottom: 12px;">
       <div style="font-size: 14px; font-weight: 700; margin-bottom: 8px;">${title}</div>
       <div style="margin-bottom: 10px; border: 1px solid #334155; border-radius: 6px; padding: 10px; background: #0b1220;">
-        <svg viewBox="0 0 ${width} ${height}" width="100%" height="180" xmlns="http://www.w3.org/2000/svg">
-          <polyline fill="none" stroke="#22d3ee" stroke-width="3" points="${points}" />
+        <svg viewBox="0 0 ${width} ${height + paddingBottom}" width="100%" xmlns="http://www.w3.org/2000/svg">
+          <!-- Axes -->
+          <line x1="${paddingLeft}" y1="0" x2="${paddingLeft}" y2="${chartH}" stroke="#475569" stroke-width="1"/>
+          <line x1="${paddingLeft}" y1="${chartH}" x2="${width}" y2="${chartH}" stroke="#475569" stroke-width="1"/>
+          <!-- Y ticks -->
+          ${yTicks}
+          <!-- X labels -->
+          ${xLabels}
+          <!-- Line -->
+          <polyline fill="none" stroke="#22d3ee" stroke-width="2.5" points="${points}" />
         </svg>
       </div>
       <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
@@ -141,7 +174,6 @@ function buildSeriesTable(title: string, months: string[], values: number[]): st
     </div>
   `;
 }
-
 function renderReportPages(data: ReportData): HTMLElement[] {
   const page1 = document.createElement("div");
   page1.style.cssText = REPORT_SURFACE_STYLE;

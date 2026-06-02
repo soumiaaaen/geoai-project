@@ -2,7 +2,11 @@
 
 import React, { useEffect, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import hydrosightLogo from "../public/hydrosight-logo.png";
+import PlanBadge from "./PlanBadge";
+import type { PlanId } from "@/lib/plans";
+import { monthsBetween, PLAN_LIMITS } from "@/lib/plans";
 
 type SidebarProps = {
   activeMode: string;
@@ -14,6 +18,12 @@ type SidebarProps = {
   setDateFin: (d: string) => void;
   onAnalyze: () => void;
   isAnalyzing: boolean;
+  plan: PlanId;
+  analysesUsed: number;
+  analysesLimit: number;
+  isModeAllowed: (modeId: string) => boolean;
+  canAnalyzeByPlan: boolean;
+  planBlockReason?: string | null;
 };
 
 export default function Sidebar({
@@ -26,6 +36,12 @@ export default function Sidebar({
   setDateFin,
   onAnalyze,
   isAnalyzing,
+  plan,
+  analysesUsed,
+  analysesLimit,
+  isModeAllowed,
+  canAnalyzeByPlan,
+  planBlockReason,
 }: SidebarProps) {
   const [logoSrc, setLogoSrc] = useState(hydrosightLogo.src);
 
@@ -43,7 +59,6 @@ export default function Sidebar({
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const pixels = imageData.data;
 
-      // Remove near-black background so the logo stays visible in all themes.
       for (let i = 0; i < pixels.length; i += 4) {
         const r = pixels[i];
         const g = pixels[i + 1];
@@ -67,7 +82,8 @@ export default function Sidebar({
   ];
 
   const isValidDate = new Date(dateFin) >= new Date(dateDebut);
-  const canAnalyze = zoneSelection !== null && isValidDate && !isAnalyzing;
+  const canAnalyze =
+    zoneSelection !== null && isValidDate && !isAnalyzing && canAnalyzeByPlan;
 
   return (
     <div
@@ -80,7 +96,7 @@ export default function Sidebar({
         padding: "24px 20px",
         display: "flex",
         flexDirection: "column",
-        gap: "28px",
+        gap: "20px",
         overflowY: "auto",
         boxShadow: "4px 0 15px rgba(0,0,0,0.2)",
         zIndex: 10,
@@ -111,50 +127,130 @@ export default function Sidebar({
         />
       </div>
 
+      <PlanBadge
+        plan={plan}
+        analysesUsed={analysesUsed}
+        analysesLimit={analysesLimit}
+        quotaPeriod={PLAN_LIMITS[plan].quotaPeriod}
+      />
+
       <div>
-        <h2 style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "16px" }}>
+        <h2
+          style={{
+            fontSize: "14px",
+            fontWeight: "700",
+            color: "var(--text-muted)",
+            textTransform: "uppercase",
+            letterSpacing: "1px",
+            marginBottom: "16px",
+          }}
+        >
           1. Sélection de Zone
         </h2>
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          {modes.map((mode) => (
-            <button
-              key={mode.id}
-              onClick={() => setActiveMode(mode.id)}
-              style={{
-                padding: "12px 16px",
-                borderRadius: "8px",
-                border: activeMode === mode.id ? "1px solid var(--accent-primary)" : "1px solid var(--border-color)",
-                backgroundColor: activeMode === mode.id ? "rgba(0, 201, 177, 0.1)" : "transparent",
-                color: activeMode === mode.id ? "var(--accent-primary)" : "#D1D5DB",
-                cursor: "pointer",
-                fontWeight: activeMode === mode.id ? "600" : "500",
-                textAlign: "left",
-                transition: "all 0.2s ease",
-                boxShadow: activeMode === mode.id ? "0 0 10px rgba(0,201,177,0.1) inset" : "none"
-              }}
-            >
-              {mode.label}
-            </button>
-          ))}
+          {modes.map((mode) => {
+            const allowed = isModeAllowed(mode.id);
+            return (
+              <button
+                key={mode.id}
+                type="button"
+                disabled={!allowed}
+                title={
+                  allowed
+                    ? undefined
+                    : "Disponible avec un plan Pro ou Premium — voir Tarifs"
+                }
+                onClick={() => allowed && setActiveMode(mode.id)}
+                style={{
+                  padding: "12px 16px",
+                  borderRadius: "8px",
+                  border:
+                    activeMode === mode.id
+                      ? "1px solid var(--accent-primary)"
+                      : "1px solid var(--border-color)",
+                  backgroundColor:
+                    activeMode === mode.id ? "rgba(0, 201, 177, 0.1)" : "transparent",
+                  color: !allowed
+                    ? "var(--text-muted)"
+                    : activeMode === mode.id
+                      ? "var(--accent-primary)"
+                      : "#D1D5DB",
+                  cursor: allowed ? "pointer" : "not-allowed",
+                  fontWeight: activeMode === mode.id ? "600" : "500",
+                  textAlign: "left",
+                  transition: "all 0.2s ease",
+                  opacity: allowed ? 1 : 0.45,
+                  boxShadow:
+                    activeMode === mode.id ? "0 0 10px rgba(0,201,177,0.1) inset" : "none",
+                }}
+              >
+                {mode.label}
+                {!allowed && (
+                  <span style={{ fontSize: 10, marginLeft: 6, opacity: 0.8 }}>🔒</span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {zoneSelection && (
-        <div style={{ padding: "14px", backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid var(--border-color)", borderRadius: "8px" }}>
-          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0, textTransform: "uppercase", letterSpacing: "0.5px" }}>Zone active</p>
-          <p style={{ fontSize: "14px", fontWeight: "600", color: "var(--foreground)", margin: "4px 0 0 0" }}>
+        <div
+          style={{
+            padding: "14px",
+            backgroundColor: "rgba(255,255,255,0.03)",
+            border: "1px solid var(--border-color)",
+            borderRadius: "8px",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "11px",
+              color: "var(--text-muted)",
+              margin: 0,
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+            }}
+          >
+            Zone active
+          </p>
+          <p
+            style={{
+              fontSize: "14px",
+              fontWeight: "600",
+              color: "var(--foreground)",
+              margin: "4px 0 0 0",
+            }}
+          >
             {zoneSelection.label || zoneSelection.granularite}
           </p>
         </div>
       )}
 
       <div>
-        <h2 style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "16px" }}>
-          2. Période d'Analyse
+        <h2
+          style={{
+            fontSize: "14px",
+            fontWeight: "700",
+            color: "var(--text-muted)",
+            textTransform: "uppercase",
+            letterSpacing: "1px",
+            marginBottom: "16px",
+          }}
+        >
+          2. Période d&apos;Analyse
         </h2>
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           <div>
-            <label style={{ display: "block", fontSize: "12px", color: "var(--text-muted)", marginBottom: "6px", fontWeight: "500" }}>
+            <label
+              style={{
+                display: "block",
+                fontSize: "12px",
+                color: "var(--text-muted)",
+                marginBottom: "6px",
+                fontWeight: "500",
+              }}
+            >
               Début
             </label>
             <input
@@ -169,12 +265,20 @@ export default function Sidebar({
                 backgroundColor: "var(--background)",
                 color: "var(--foreground)",
                 outline: "none",
-                fontFamily: "inherit"
+                fontFamily: "inherit",
               }}
             />
           </div>
           <div>
-            <label style={{ display: "block", fontSize: "12px", color: "var(--text-muted)", marginBottom: "6px", fontWeight: "500" }}>
+            <label
+              style={{
+                display: "block",
+                fontSize: "12px",
+                color: "var(--text-muted)",
+                marginBottom: "6px",
+                fontWeight: "500",
+              }}
+            >
               Fin
             </label>
             <input
@@ -189,7 +293,7 @@ export default function Sidebar({
                 backgroundColor: "var(--background)",
                 color: "var(--foreground)",
                 outline: "none",
-                fontFamily: "inherit"
+                fontFamily: "inherit",
               }}
             />
           </div>
@@ -198,10 +302,36 @@ export default function Sidebar({
               La date de fin doit être après la date de début.
             </p>
           )}
+          {isValidDate && (
+            <p style={{ fontSize: 11, color: "var(--text-muted)", margin: 0 }}>
+              Durée : {monthsBetween(dateDebut, dateFin)} mois
+            </p>
+          )}
         </div>
       </div>
 
+      {planBlockReason && (
+        <p
+          style={{
+            fontSize: 12,
+            color: "#f59e0b",
+            margin: 0,
+            lineHeight: 1.5,
+            padding: "10px 12px",
+            background: "rgba(245,158,11,0.1)",
+            borderRadius: 8,
+            border: "1px solid rgba(245,158,11,0.25)",
+          }}
+        >
+          {planBlockReason}{" "}
+          <Link href="/pricing" style={{ color: "var(--accent-primary)" }}>
+            Voir les offres
+          </Link>
+        </p>
+      )}
+
       <button
+        type="button"
         onClick={onAnalyze}
         disabled={!canAnalyze}
         style={{
@@ -219,12 +349,20 @@ export default function Sidebar({
           justifyContent: "center",
           alignItems: "center",
           boxShadow: canAnalyze ? "0 4px 15px rgba(0,201,177,0.3)" : "none",
-          animation: canAnalyze && !isAnalyzing ? "pulse-glow 2s infinite" : "none"
         }}
       >
         {isAnalyzing ? (
           <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <div style={{ width: "16px", height: "16px", border: "2px solid #0B1120", borderTop: "2px solid transparent", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+            <div
+              style={{
+                width: "16px",
+                height: "16px",
+                border: "2px solid #0B1120",
+                borderTop: "2px solid transparent",
+                borderRadius: "50%",
+                animation: "spin 1s linear infinite",
+              }}
+            />
             Analyse...
           </span>
         ) : (

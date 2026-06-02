@@ -4,7 +4,10 @@ import json
 import concurrent.futures
 from functools import lru_cache
 
-import redis as redis_lib
+try:
+    import redis as redis_lib
+except ImportError:
+    redis_lib = None  # type: ignore
 
 
 class GEEService:
@@ -19,6 +22,8 @@ class GEEService:
     # Redis client — shared across all calls
     # Falls back gracefully if Redis is not running
     try:
+        if redis_lib is None:
+            raise RuntimeError("redis package not installed")
         _redis = redis_lib.Redis(host="localhost", port=6379, decode_responses=True)
         _redis.ping()  # confirm connection at import time
     except Exception:

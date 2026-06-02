@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-dotenv
+earthengine-api
+redis
+python-jose[cryptography]
+httpx
+pydantic
+requests
